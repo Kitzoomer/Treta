@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Callable, Iterable, Sequence
 
 from modes.magic import open_magic_mode
+from modes.profile import open_profile_mode
 from modes.warhammer import open_warhammer_mode
 from modes.work import open_work_mode
 
@@ -35,6 +36,12 @@ def get_modes() -> Sequence[ModeSpec]:
             title="Modo Magic",
             position=ModePosition.RIGHT,
             handler=open_magic_mode,
+        ),
+        ModeSpec(
+            mode_id="profile",
+            title="Modo Perfil",
+            position=ModePosition.LEFT,
+            handler=open_profile_mode,
         ),
         ModeSpec(
             mode_id="warhammer",
