@@ -1,5 +1,8 @@
 import os, json, time, threading, queue, subprocess
 import argparse
+import difflib
+import re
+import unicodedata
 import wave
 from datetime import datetime, timedelta
 import tkinter as tk
@@ -26,6 +29,7 @@ PENDING_CONFIRM_PATH = os.path.join(BRIDGE_DIR, "pending_confirm.json")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 IDEAS_PATH = os.path.join(DATA_DIR, "ideas.jsonl")
 DIARY_PATH = os.path.join(DATA_DIR, "diary.jsonl")
+INTENTS_PATH = os.path.join(DATA_DIR, "intents.jsonl")
 
 
 def _ensure_dirs():
@@ -57,6 +61,90 @@ def write_json(path: str, obj):
 def append_jsonl(path: str, obj):
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def normalize_text(text: str) -> str:
+    lowered = text.lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", lowered) if unicodedata.category(c) != "Mn"
+    )
+
+
+def apply_gain(audio: np.ndarray, gain_db: float) -> np.ndarray:
+    if not audio.size or gain_db == 0:
+        return audio
+    gain = float(10 ** (gain_db / 20))
+    boosted = audio * gain
+    return np.clip(boosted, -1.0, 1.0)
+
+
+def fuzzy_contains(text: str, pattern: str, threshold: float) -> bool:
+    text_words = text.split()
+    pattern_words = pattern.split()
+    if not text_words or not pattern_words:
+        return False
+    if len(text_words) < len(pattern_words):
+        candidate = " ".join(text_words)
+        return difflib.SequenceMatcher(None, candidate, pattern).ratio() >= threshold
+    for idx in range(len(text_words) - len(pattern_words) + 1):
+        candidate = " ".join(text_words[idx : idx + len(pattern_words)])
+        if difflib.SequenceMatcher(None, candidate, pattern).ratio() >= threshold:
+            return True
+    return False
+
+
+def parse_int(value, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def load_local_intents(cfg: dict) -> list[dict]:
+    intents = cfg.get("local_intents", [])
+    return intents if isinstance(intents, list) else []
+
+
+def resolve_timezone(cfg: dict) -> tuple[datetime, str]:
+    tz_name = (cfg.get("time_zone") or "local").strip()
+    if not tz_name or tz_name.lower() == "local":
+        return datetime.now(), ""
+    try:
+        from zoneinfo import ZoneInfo
+    except Exception:
+        return datetime.now(), ""
+    try:
+        return datetime.now(tz=ZoneInfo(tz_name)), f"({tz_name})"
+    except Exception:
+        return datetime.now(), ""
+
+
+def render_local_response(template: str, cfg: dict) -> str:
+    now, tz_label = resolve_timezone(cfg)
+    weekday_map = {
+        "monday": "lunes",
+        "tuesday": "martes",
+        "wednesday": "miércoles",
+        "thursday": "jueves",
+        "friday": "viernes",
+        "saturday": "sábado",
+        "sunday": "domingo",
+    }
+    weekday_es = weekday_map.get(now.strftime("%A").lower(), now.strftime("%A"))
+    text = (
+        template.replace("{time}", now.strftime("%H:%M"))
+        .replace("{date}", now.strftime("%d/%m/%Y"))
+        .replace("{weekday}", weekday_es)
+        .replace("{timezone}", tz_label)
+    )
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+([.,!?])", r"\1", text)
 
 
 def load_config() -> dict:
@@ -144,6 +232,9 @@ class TretaPanel(tk.Tk):
         self.stop_event = threading.Event()
         self.speaking = threading.Event()
         self.mic_index = pick_input_device(self.cfg)
+        self._last_audio_sr: int | None = None
+        self._resolved_sr: int | None = None
+        self._resolved_ch: int = 1
 
         # Captura de idea
         self._idea_capture_next = False
@@ -228,11 +319,19 @@ class TretaPanel(tk.Tk):
             mic_desc = str(self.mic_index)
             try:
                 mic_dev = sd.query_devices(self.mic_index)
-                mic_desc = f"{self.mic_index} ({mic_dev.get('name', 'desconocido')})"
+                mic_desc = (
+                    f"{self.mic_index} ({mic_dev.get('name', 'desconocido')}, "
+                    f"default_sr={mic_dev.get('default_samplerate', 'n/a')})"
+                )
             except Exception:
                 pass
+        self._resolve_audio_config()
         self._log(f"🎤 Mic: {mic_desc}\n")
-        self._log(f"🎚️ sample_rate: {self.cfg.get('sample_rate', 48000)}\n")
+        self._log(
+            f"🎚️ sample_rate: {self._resolved_sr or 'auto'} | channels: {self._resolved_ch}\n"
+        )
+        self._log(f"🔊 input_gain_db: {self.cfg.get('input_gain_db', 0.0)}\n")
+        self._log(f"🧠 stt_initial_prompt: {self.cfg.get('stt_initial_prompt', '')}\n")
         self._log(
             "🎯 thresholds: "
             f"noise_calib_sec={self.cfg.get('noise_calib_sec', 0.6)}, "
@@ -255,6 +354,24 @@ class TretaPanel(tk.Tk):
 
         for b in self.cfg.get("panel_buttons_right", []):
             ttk.Button(self.right, text=b["label"], command=lambda bb=b: self._button_action(bb)).pack(fill="x", pady=4)
+
+    def _resolve_audio_config(self):
+        sr_cfg = parse_int(self.cfg.get("sample_rate", 48000))
+        ch_cfg = parse_int(self.cfg.get("channels", 1))
+        resolved_sr = sr_cfg
+        resolved_ch = ch_cfg or 1
+        try:
+            if self.mic_index is not None:
+                dev = sd.query_devices(self.mic_index)
+                if resolved_sr is None:
+                    resolved_sr = int(dev.get("default_samplerate", 48000))
+                if ch_cfg is None:
+                    resolved_ch = 1 if dev.get("max_input_channels", 1) >= 1 else 1
+        except Exception:
+            if resolved_sr is None:
+                resolved_sr = 48000
+        self._resolved_sr = resolved_sr or 48000
+        self._resolved_ch = resolved_ch or 1
 
     # ---------- Logging ----------
     def _log(self, s: str):
@@ -492,7 +609,7 @@ class TretaPanel(tk.Tk):
                 self._log_timing("VAD", self._last_vad_seconds)
             self.after(0, lambda: self.meter.configure(value=0))
 
-            sr = int(self.cfg.get("sample_rate", 48000))
+            sr = int(self._last_audio_sr or self._resolved_sr or 48000)
             self._write_debug_wav(audio, sr)
             if audio is None or len(audio) < int(sr * 0.3):
                 self._finish_listen()
@@ -549,6 +666,10 @@ class TretaPanel(tk.Tk):
         wake = (self.cfg.get("wake_word") or "").lower().strip()
         if wake and wake in t:
             t = t.replace(wake, "").strip(" ,.:;!?¡¿")
+        t_norm = normalize_text(t)
+
+        if self._handle_local_intent(t_norm):
+            return True
 
         for rule in self.cfg.get("voice_commands", []):
             m = (rule.get("match") or "").lower()
@@ -575,14 +696,57 @@ class TretaPanel(tk.Tk):
 
         return False
 
+    def _log_intent(self, payload: dict):
+        payload = {"ts": now_iso(), **payload}
+        append_jsonl(INTENTS_PATH, payload)
+
+    def _handle_local_intent(self, text: str) -> bool:
+        intents = load_local_intents(self.cfg)
+        threshold = float(self.cfg.get("fuzzy_match_threshold", 0.84))
+        for intent in intents:
+            name = str(intent.get("name") or "unknown")
+            patterns = intent.get("patterns", [])
+            response = str(intent.get("response") or "")
+            if not response or not isinstance(patterns, list):
+                continue
+            for pattern in patterns:
+                pattern_norm = normalize_text(str(pattern))
+                matched = False
+                if not pattern_norm:
+                    continue
+                if pattern_norm.startswith("re:"):
+                    expr = pattern_norm[3:]
+                    if re.search(expr, text):
+                        matched = True
+                elif pattern_norm in text:
+                    matched = True
+                elif fuzzy_contains(text, pattern_norm, threshold):
+                    matched = True
+                if matched:
+                    answer = render_local_response(response, self.cfg)
+                    self._log(f"🎯 Intento local: {name} (patrón: {pattern_norm})\n")
+                    self._log_intent(
+                        {
+                            "source": "panel",
+                            "intent": name,
+                            "pattern": pattern_norm,
+                            "text": text,
+                            "response": answer,
+                        }
+                    )
+                    self.speak(answer)
+                    return True
+        return False
+
     # ---------- Audio capture ----------
     def _record_until_silence(self):
-        sr = int(self.cfg.get("sample_rate", 48000))
-        ch = int(self.cfg.get("channels", 1))
+        sr = int(self._resolved_sr or 48000)
+        ch = int(self._resolved_ch or 1)
         max_sec = float(self.cfg.get("max_record_sec", 90))
         noise_calib = float(self.cfg.get("noise_calib_sec", 0.6))
         end_silence = float(self.cfg.get("end_silence_sec", 1.2))
         thresh_mult = float(self.cfg.get("thresh_mult", 2.8))
+        gain_db = float(self.cfg.get("input_gain_db", 0.0))
 
         # calibración
         self._set_status("calibrando ruido…")
@@ -644,7 +808,9 @@ class TretaPanel(tk.Tk):
         audio = np.concatenate(chunks, axis=0).astype(np.float32)
         if audio.ndim == 2 and audio.shape[1] > 1:
             audio = audio[:, 0]
-        return audio.squeeze()
+        self._last_audio_sr = sr
+        audio = apply_gain(audio.squeeze(), gain_db)
+        return audio
 
     def _record_fixed(self, seconds: float, sr: int, ch: int):
         frames = int(sr * seconds)
@@ -654,15 +820,19 @@ class TretaPanel(tk.Tk):
             x = data.astype(np.float32)
             if x.ndim == 2 and x.shape[1] > 1:
                 x = x[:, 0]
-            return x.squeeze()
+            return apply_gain(x.squeeze(), float(self.cfg.get("input_gain_db", 0.0)))
         except Exception as e:
             self._log(f"❌ Error grabando audio: {e}\n")
             return None
 
     def _transcribe(self, audio: np.ndarray) -> str:
-        sr_in = int(self.cfg.get("sample_rate", 48000))
+        sr_in = int(self._last_audio_sr or self._resolved_sr or 48000)
         audio_16k = resample_linear(audio, sr_in, 16000)
-        segments, _ = self.whisper.transcribe(audio_16k, language=self.cfg.get("language", "es"), vad_filter=True)
+        prompt = (self.cfg.get("stt_initial_prompt") or "").strip()
+        kwargs = dict(language=self.cfg.get("language", "es"), vad_filter=True)
+        if prompt:
+            kwargs["initial_prompt"] = prompt
+        segments, _ = self.whisper.transcribe(audio_16k, **kwargs)
         return " ".join(seg.text.strip() for seg in segments).strip()
 
     def _ask_chatgpt(self, user_text: str) -> str:
