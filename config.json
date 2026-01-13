@@ -13,31 +13,8 @@
     "system_prompt":  "Eres Treta la Torreta: tecnica, clara, curiosa y creativa. Responde en espaÃƒÆ’Ã‚Â±ol, directo y ÃƒÆ’Ã‚Âºtil.",
     "wake_word":  "treta",
     "stt_initial_prompt":  "Treta,",
-    "time_zone":  "local",
-    "fuzzy_match_threshold":  0.84,
-    "local_intents":  [
-                          {
-                              "name":  "time",
-                              "patterns":  [
-                                               "que hora es",
-                                               "que hora son",
-                                               "dime la hora",
-                                               "hora actual",
-                                               "la hora actual"
-                                           ],
-                              "response":  "Son las {time} {timezone}."
-                          },
-                          {
-                              "name":  "date",
-                              "patterns":  [
-                                               "que dia es",
-                                               "que fecha es",
-                                               "fecha de hoy",
-                                               "dia de hoy"
-                                           ],
-                              "response":  "Hoy es {date}, {weekday}."
-                          }
-                      ],
+    "min_input_rms":  0.004,
+    "max_input_rms":  0.35,
     "panel_buttons_left":  [
                                {
                                    "label":  "Modo Trabajo",

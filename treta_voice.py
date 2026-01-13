@@ -5,14 +5,11 @@ import json
 import logging
 import os
 import queue
-import difflib
-import re
 import threading
 import time
 import wave
 from datetime import datetime
 from pathlib import Path
-import unicodedata
 
 import numpy as np
 import sounddevice as sd
@@ -412,34 +409,12 @@ def extract_query(text: str):
     return None
 
 
-def normalize_text(text: str) -> str:
-    lowered = text.lower()
-    return "".join(
-        c for c in unicodedata.normalize("NFD", lowered) if unicodedata.category(c) != "Mn"
-    )
-
-
 def apply_gain(audio: np.ndarray, gain_db: float) -> np.ndarray:
     if not audio.size or gain_db == 0:
         return audio
     gain = float(10 ** (gain_db / 20))
     boosted = audio * gain
     return np.clip(boosted, -1.0, 1.0)
-
-
-def fuzzy_contains(text: str, pattern: str, threshold: float) -> bool:
-    text_words = text.split()
-    pattern_words = pattern.split()
-    if not text_words or not pattern_words:
-        return False
-    if len(text_words) < len(pattern_words):
-        candidate = " ".join(text_words)
-        return difflib.SequenceMatcher(None, candidate, pattern).ratio() >= threshold
-    for idx in range(len(text_words) - len(pattern_words) + 1):
-        candidate = " ".join(text_words[idx : idx + len(pattern_words)])
-        if difflib.SequenceMatcher(None, candidate, pattern).ratio() >= threshold:
-            return True
-    return False
 
 
 def parse_int(value, default: int | None = None) -> int | None:
@@ -455,80 +430,15 @@ def parse_int(value, default: int | None = None) -> int | None:
         return default
 
 
-def load_local_intents(cfg: dict) -> list[dict]:
-    intents = cfg.get("local_intents", [])
-    return intents if isinstance(intents, list) else []
-
-
-def resolve_timezone(cfg: dict) -> tuple[datetime, str]:
-    tz_name = (cfg.get("time_zone") or "local").strip()
-    if not tz_name or tz_name.lower() == "local":
-        return datetime.now(), ""
+def parse_float(value, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
     try:
-        from zoneinfo import ZoneInfo
-    except Exception:
-        return datetime.now(), ""
-    try:
-        return datetime.now(tz=ZoneInfo(tz_name)), f"({tz_name})"
-    except Exception:
-        return datetime.now(), ""
-
-
-def render_local_response(template: str, cfg: dict) -> str:
-    now, tz_label = resolve_timezone(cfg)
-    weekday_map = {
-        "monday": "lunes",
-        "tuesday": "martes",
-        "wednesday": "miércoles",
-        "thursday": "jueves",
-        "friday": "viernes",
-        "saturday": "sábado",
-        "sunday": "domingo",
-    }
-    weekday_es = weekday_map.get(now.strftime("%A").lower(), now.strftime("%A"))
-    text = (
-        template.replace("{time}", now.strftime("%H:%M"))
-        .replace("{date}", now.strftime("%d/%m/%Y"))
-        .replace("{weekday}", weekday_es)
-        .replace("{timezone}", tz_label)
-    )
-    text = re.sub(r"\s+", " ", text).strip()
-    return re.sub(r"\s+([.,!?])", r"\1", text)
-
-
-def log_intent(payload: dict):
-    path = DATA_DIR / "intents.jsonl"
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    payload = {"ts": datetime.now().isoformat(timespec="seconds"), **payload}
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
-
-def handle_local_intent(text: str, cfg: dict) -> tuple[bool, str, str, str]:
-    intents = load_local_intents(cfg)
-    threshold = float(cfg.get("fuzzy_match_threshold", 0.84))
-    for intent in intents:
-        name = str(intent.get("name") or "unknown")
-        patterns = intent.get("patterns", [])
-        response = str(intent.get("response") or "")
-        if not response or not isinstance(patterns, list):
-            continue
-        for pattern in patterns:
-            pattern_norm = normalize_text(str(pattern))
-            matched = False
-            if not pattern_norm:
-                continue
-            if pattern_norm.startswith("re:"):
-                expr = pattern_norm[3:]
-                if re.search(expr, text):
-                    matched = True
-            elif pattern_norm in text:
-                matched = True
-            elif fuzzy_contains(text, pattern_norm, threshold):
-                matched = True
-            if matched:
-                return True, render_local_response(response, cfg), name, pattern_norm
-    return False, "", "", ""
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def ask_chatgpt(user_query: str) -> str:
@@ -579,6 +489,8 @@ def main():
     logger.info("channels: %s", cfg.get("channels", "unknown"))
     logger.info("input_gain_db: %s", cfg.get("input_gain_db", 0.0))
     logger.info("stt_initial_prompt: %s", cfg.get("stt_initial_prompt", ""))
+    logger.info("min_input_rms: %s", cfg.get("min_input_rms", 0.0))
+    logger.info("max_input_rms: %s", cfg.get("max_input_rms", 1.0))
     logger.info("mic_device_index: %s", cfg.get("mic_device_index", "unknown"))
     logger.info("mic_device_name_contains: %s", cfg.get("mic_device_name_contains", "unknown"))
     logger.info(
@@ -626,6 +538,8 @@ def main():
     channels = parse_int(cfg.get("channels", 1)) or 1
     preferred_sr = parse_int(cfg.get("sample_rate", None))
     input_gain_db = float(cfg.get("input_gain_db", 0.0))
+    min_rms = parse_float(cfg.get("min_input_rms", 0.0), 0.0) or 0.0
+    max_rms = parse_float(cfg.get("max_input_rms", 1.0), 1.0) or 1.0
     stt_prompt = (cfg.get("stt_initial_prompt") or "").strip() or None
 
     if args.mic is not None:
@@ -724,6 +638,13 @@ def main():
                 save_debug_segments(segments, DATA_DIR / "debug_last_segments.json")
             if not speech_detected or audio_16k.size == 0:
                 continue
+            level = float(np.sqrt(np.mean(audio_16k * audio_16k) + 1e-12))
+            if level < min_rms:
+                print("⚠️ Audio muy bajo. Revisa el micro o sube input_gain_db.")
+                speak("No te oigo bien. Sube el volumen del micro o acércate.")
+                continue
+            if level > max_rms:
+                print("⚠️ Audio saturado. Baja el volumen del micro.")
 
             stt_t0 = time.perf_counter()
             text = transcribe(audio_16k, gain_db=input_gain_db, prompt=stt_prompt)
@@ -744,22 +665,6 @@ def main():
                 continue
 
             if q:
-                q_norm = normalize_text(q)
-                matched, response, intent_name, pattern = handle_local_intent(q_norm, cfg)
-                if matched:
-                    print(f"🎯 Intento local: {intent_name} (patrón: {pattern})")
-                    log_intent(
-                        {
-                            "source": "voice",
-                            "intent": intent_name,
-                            "pattern": pattern,
-                            "text": q_norm,
-                            "response": response,
-                        }
-                    )
-                    time.sleep(0.2)
-                    speak(response)
-                    continue
                 speak("Procesando.")
                 answer = ask_chatgpt(q)
                 print("🤖 Treta:", answer)
