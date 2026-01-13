@@ -1,26 +1,58 @@
+import argparse
+import json
 from __future__ import annotations
 
 import os
 import queue
-import time
 import threading
+import time
+import wave
+from pathlib import Path
+
+import numpy as np
+import sounddevice as sd
+import webrtcvad
+from openai import OpenAI
+import pyttsx3
+import pythoncom
 import argparse
 import json
 import logging
 import wave
 
 
-LANGUAGE = "es"
-WAKE_WORDS = ["treta"]
-
-MIC_DEVICE = 19      # ✅ tu micro nuevo
-CHANNELS = 1
-BLOCK_SEC = 5.0
+DATA_DIR = Path("data")
+TARGET_SAMPLE_RATE = 16000
+FRAME_MS = 30
+FRAME_SAMPLES = int(TARGET_SAMPLE_RATE * FRAME_MS / 1000)
 
 # Anti-eco: no grabar mientras habla y un poco después
 TTS_COOLDOWN_SEC = 0.8
 
+
+CONFIG_PATH = os.environ.get("TRETA_CONFIG", "config.json")
+
+
+def load_config(path: str) -> dict:
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+_config = load_config(CONFIG_PATH)
+
+LANGUAGE = "es"
+WAKE_WORDS = ["treta"]
+
+MIC_NAME_CONTAINS = (_config.get("mic_device_name_contains") or "").strip()
+CHANNELS = 1
+MAX_RECORD_SEC = float(_config.get("max_record_sec", 20))
+END_SILENCE_SEC = float(_config.get("end_silence_sec", 1.8))
+
 whisper = None
+client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 client = None
 
 audio_q = queue.Queue()
@@ -105,6 +137,7 @@ def _run_vad_pass(audio: np.ndarray, sr: int, cfg: dict) -> bool:
 
 
 def _resample_to_16k(x: np.ndarray, sr_in: int) -> np.ndarray:
+    sr_out = TARGET_SAMPLE_RATE
     import numpy as np
 
     sr_out = 16000
@@ -120,6 +153,96 @@ def _resample_to_16k(x: np.ndarray, sr_in: int) -> np.ndarray:
     t_in = np.linspace(0, dur, num=n_in, endpoint=False)
     t_out = np.linspace(0, dur, num=n_out, endpoint=False)
     return np.interp(t_out, t_in, x).astype(np.float32)
+
+
+def _float_to_pcm16(audio: np.ndarray) -> bytes:
+    if audio.size == 0:
+        return b""
+    clipped = np.clip(audio, -1.0, 1.0)
+    return (clipped * 32767).astype(np.int16).tobytes()
+
+
+def list_input_devices() -> list[tuple[int, dict]]:
+    devices = []
+    for idx, dev in enumerate(sd.query_devices()):
+        if dev.get("max_input_channels", 0) > 0:
+            devices.append((idx, dev))
+    return devices
+
+
+def print_input_devices() -> None:
+    for idx, dev in list_input_devices():
+        print(
+            idx,
+            "|",
+            dev["name"],
+            "| inputs:",
+            dev["max_input_channels"],
+            "| default_sr:",
+            dev.get("default_samplerate"),
+        )
+
+
+def find_device_by_name_contains(name_contains: str) -> int | None:
+    if not name_contains:
+        return None
+    needle = name_contains.lower()
+    matches: list[tuple[int, float]] = []
+    for idx, dev in list_input_devices():
+        if needle in dev.get("name", "").lower():
+            default_sr = float(dev.get("default_samplerate") or 0)
+            matches.append((idx, default_sr))
+    if matches:
+        matches.sort(key=lambda item: item[1], reverse=True)
+        return matches[0][0]
+    return None
+
+
+def default_input_device() -> int | None:
+    default_device = sd.default.device[0]
+    if default_device is not None and default_device >= 0:
+        return int(default_device)
+    devices = list_input_devices()
+    if devices:
+        return devices[0][0]
+    return None
+
+
+def vad_flags_to_segments(flags: list[bool], frame_ms: int = FRAME_MS) -> list[dict]:
+    if not flags:
+        return []
+    segments: list[dict] = []
+    frame_sec = frame_ms / 1000.0
+    current_type = "speech" if flags[0] else "silence"
+    start_idx = 0
+    for idx, flag in enumerate(flags[1:], start=1):
+        next_type = "speech" if flag else "silence"
+        if next_type != current_type:
+            segments.append(
+                {"type": current_type, "start": start_idx * frame_sec, "end": idx * frame_sec}
+            )
+            start_idx = idx
+            current_type = next_type
+    segments.append(
+        {"type": current_type, "start": start_idx * frame_sec, "end": len(flags) * frame_sec}
+    )
+    return segments
+
+
+def save_debug_audio(audio_16k: np.ndarray, path: Path) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    pcm16 = _float_to_pcm16(audio_16k)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(TARGET_SAMPLE_RATE)
+        wf.writeframes(pcm16)
+
+
+def save_debug_segments(segments: list[dict], path: Path) -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(segments, f, ensure_ascii=False, indent=2)
 
 
 def tts_worker():
@@ -211,10 +334,16 @@ def _drain_queue(q: queue.Queue, max_items: int = 9999):
             break
 
 
-def record_block(seconds: float) -> tuple[np.ndarray, int]:
+def record_utterance(
+    max_record_sec: float,
+    end_silence_sec: float,
+    device: int,
+    channels: int,
+    vad,
+) -> tuple[np.ndarray, list[dict], bool]:
     """
-    Graba un bloque y devuelve (audio, samplerate_usado).
-    Robusto: prueba varias combinaciones para evitar -9996.
+    Graba hasta detectar fin de frase usando VAD y hangover.
+    Devuelve (audio_16k, segments, speech_detected).
     """
     import numpy as np
     import sounddevice as sd
@@ -222,9 +351,9 @@ def record_block(seconds: float) -> tuple[np.ndarray, int]:
     _drain_queue(audio_q)
 
     candidates = [
-        (None, CHANNELS),
-        (48000, CHANNELS),
-        (16000, CHANNELS),
+        (None, channels),
+        (48000, channels),
+        (16000, channels),
         # por si el dispositivo realmente es estéreo obligatorio:
         (None, 2),
         (48000, 2),
@@ -232,37 +361,70 @@ def record_block(seconds: float) -> tuple[np.ndarray, int]:
     ]
 
     last_err = None
+    dev_info = sd.query_devices(device)
+    default_sr = int(dev_info.get("default_samplerate", 48000))
+    max_frames = max(1, int(max_record_sec * 1000 / FRAME_MS))
+    end_silence_frames = max(1, int(end_silence_sec * 1000 / FRAME_MS))
 
     for sr, ch in candidates:
         try:
-            with _try_open_inputstream(MIC_DEVICE, sr, ch):
-                chunks = []
-                t0 = time.time()
-                while time.time() - t0 < seconds:
+            used_sr = int(sr if sr is not None else default_sr)
+            with _try_open_inputstream(device, sr, ch):
+                audio_parts: list[np.ndarray] = []
+                frame_buffer = np.zeros((0,), dtype=np.float32)
+                vad_flags: list[bool] = []
+                frames_processed = 0
+                speech_detected = False
+                last_speech_frame = None
+                stop = False
+                start_time = time.time()
+
+                while frames_processed < max_frames and not stop:
                     try:
-                        chunks.append(audio_q.get(timeout=0.5))
+                        chunk = audio_q.get(timeout=0.5)
                     except queue.Empty:
-                        pass
+                        if time.time() - start_time > max_record_sec + 1.0:
+                            break
+                        continue
 
-            if not chunks:
-                used_sr = sr if sr is not None else 48000
-                return np.zeros((int(used_sr * seconds),), dtype=np.float32), used_sr
+                    if chunk.ndim == 2 and chunk.shape[1] > 1:
+                        chunk = chunk[:, 0]
+                    chunk = chunk.squeeze().astype(np.float32)
+                    chunk_16k = _resample_to_16k(chunk, used_sr)
+                    if chunk_16k.size == 0:
+                        continue
 
-            audio = np.concatenate(chunks, axis=0).astype(np.float32)
+                    audio_parts.append(chunk_16k)
+                    frame_buffer = np.concatenate([frame_buffer, chunk_16k])
 
-            # Si grabamos 2 canales, nos quedamos con el primero
-            if audio.ndim == 2 and audio.shape[1] > 1:
-                audio = audio[:, 0]
-            else:
-                audio = audio.squeeze()
+                    while frame_buffer.shape[0] >= FRAME_SAMPLES and frames_processed < max_frames:
+                        frame = frame_buffer[:FRAME_SAMPLES]
+                        frame_buffer = frame_buffer[FRAME_SAMPLES:]
+                        is_speech = vad.is_speech(_float_to_pcm16(frame), TARGET_SAMPLE_RATE)
+                        vad_flags.append(is_speech)
+                        frames_processed += 1
 
-            used_sr = sr if sr is not None else 48000
-            print(f"🎛️ Grabación OK con sr={sr if sr is not None else 'auto'} ch={ch}")
-            return audio, used_sr
+                        if is_speech:
+                            speech_detected = True
+                            last_speech_frame = frames_processed
+                        if speech_detected and last_speech_frame is not None:
+                            if frames_processed - last_speech_frame >= end_silence_frames:
+                                stop = True
+                                break
+
+                if not audio_parts:
+                    return np.zeros((0,), dtype=np.float32), [], False
+
+                audio_16k = np.concatenate(audio_parts, axis=0)
+                if frames_processed > 0:
+                    audio_16k = audio_16k[:frames_processed * FRAME_SAMPLES]
+                segments = vad_flags_to_segments(vad_flags)
+                print(f"🎛️ Grabación OK con sr={sr if sr is not None else 'auto'} ch={ch}")
+                return audio_16k, segments, speech_detected
 
         except sd.PortAudioError as e:
             last_err = e
-            print(f"⚠️ No pude abrir micro={MIC_DEVICE} sr={sr} ch={ch}: {e}")
+            print(f"⚠️ No pude abrir micro={device} sr={sr} ch={ch}: {e}")
 
     raise sd.PortAudioError(
         f"Error abriendo InputStream en todas las combinaciones. Último error: {last_err}"
@@ -270,6 +432,14 @@ def record_block(seconds: float) -> tuple[np.ndarray, int]:
 
 
 def transcribe(audio_16k: np.ndarray) -> str:
+    global whisper
+    if whisper is None:
+        try:
+            from faster_whisper import WhisperModel
+        except ModuleNotFoundError:
+            print("⚠️ faster_whisper no está instalado. Instálalo para habilitar la transcripción.")
+            return ""
+        whisper = WhisperModel("small", device="cpu", compute_type="int8")
     segments, _ = whisper.transcribe(audio_16k, language=LANGUAGE, vad_filter=True)
     return " ".join(seg.text.strip() for seg in segments).strip()
 
@@ -285,6 +455,8 @@ def extract_query(text: str):
 
 
 def ask_chatgpt(user_query: str) -> str:
+    if not os.environ.get("OPENAI_API_KEY"):
+        return "API key no configurada."
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -294,6 +466,14 @@ def ask_chatgpt(user_query: str) -> str:
         temperature=0.4,
     )
     return (resp.choices[0].message.content or "").strip()
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Treta voice assistant")
+    parser.add_argument("--list-mics", action="store_true", help="Listar micrófonos disponibles y salir.")
+    parser.add_argument("--mic", type=int, help="ID de micrófono a usar (override).")
+    parser.add_argument("--debug", action="store_true", help="Guardar audio/segmentos de depuración.")
+    return parser.parse_args()
 
 
 def main():
@@ -338,8 +518,9 @@ def main():
             _log_timing(stage, time.perf_counter() - t0)
         return
 
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("Falta OPENAI_API_KEY. Configúrala con setx y abre una terminal nueva.")
+    args = parse_args()
+    if args.list_mics:
+        print_input_devices()
         return
 
     import numpy as np
@@ -361,12 +542,48 @@ def main():
         print("❌ TTS no quedó listo a tiempo.")
         return
 
+    vad = webrtcvad.Vad(2)
+    if args.mic is not None:
+        mic_device = args.mic
+    else:
+        mic_device = find_device_by_name_contains(MIC_NAME_CONTAINS)
+        if mic_device is None:
+            if MIC_NAME_CONTAINS:
+                print(
+                    f"⚠️ No encontré micros que contengan '{MIC_NAME_CONTAINS}'. Usando el dispositivo por defecto."
+                )
+            mic_device = default_input_device()
+        else:
+            print(
+                f"🎚️ Micro seleccionado por nombre (contains='{MIC_NAME_CONTAINS}'): id {mic_device}."
+            )
+    if mic_device is None:
+        print("❌ No se encontró ningún dispositivo de entrada.")
+        print("🧾 Dispositivos de entrada disponibles:")
+        print_input_devices()
+        return
+
     # Info del micro
     try:
-        dev = sd.query_devices(MIC_DEVICE)
-        print(f"🎤 Usando micro {MIC_DEVICE}: {dev['name']} (inputs={dev['max_input_channels']})")
+        dev = sd.query_devices(mic_device)
+        print(f"🎤 Usando micro {mic_device}: {dev['name']} (inputs={dev['max_input_channels']})")
     except Exception as e:
-        print("⚠️ No pude consultar el micro seleccionado:", e)
+        print(f"⚠️ No pude consultar el micro {mic_device}: {e}")
+        fallback_device = default_input_device()
+        if fallback_device is not None and fallback_device != mic_device:
+            try:
+                dev = sd.query_devices(fallback_device)
+                mic_device = fallback_device
+                print(f"🎤 Usando micro {mic_device}: {dev['name']} (inputs={dev['max_input_channels']})")
+            except Exception as err:
+                print(f"❌ No pude consultar el micro por defecto {fallback_device}: {err}")
+                print("🧾 Dispositivos de entrada disponibles:")
+                print_input_devices()
+                return
+        else:
+            print("🧾 Dispositivos de entrada disponibles:")
+            print_input_devices()
+            return
 
     speak("Treta en línea. Voz verificada. Dime: Treta, y tu pregunta.")
     time.sleep(0.2)
@@ -380,6 +597,42 @@ def main():
                 time.sleep(0.05)
                 continue
 
+            try:
+                audio_16k, segments, speech_detected = record_utterance(
+                    MAX_RECORD_SEC,
+                    END_SILENCE_SEC,
+                    mic_device,
+                    CHANNELS,
+                    vad,
+                )
+            except sd.PortAudioError as e:
+                fallback_device = default_input_device()
+                if fallback_device is None or fallback_device == mic_device:
+                    print(f"❌ No se pudo abrir el micro {mic_device}: {e}")
+                    print("🧾 Dispositivos de entrada disponibles:")
+                    print_input_devices()
+                    continue
+                print(f"⚠️ No se pudo abrir el micro {mic_device}: {e}")
+                print(f"🔁 Reintentando con el dispositivo por defecto {fallback_device}.")
+                try:
+                    audio_16k, segments, speech_detected = record_utterance(
+                        MAX_RECORD_SEC,
+                        END_SILENCE_SEC,
+                        fallback_device,
+                        CHANNELS,
+                        vad,
+                    )
+                    mic_device = fallback_device
+                except sd.PortAudioError as err:
+                    print(f"❌ No se pudo abrir el micro por defecto {fallback_device}: {err}")
+                    print("🧾 Dispositivos de entrada disponibles:")
+                    print_input_devices()
+                    continue
+            if args.debug:
+                save_debug_audio(audio_16k, DATA_DIR / "debug_last.wav")
+                save_debug_segments(segments, DATA_DIR / "debug_last_segments.json")
+            if not speech_detected or audio_16k.size == 0:
+                continue
             capture_t0 = time.perf_counter()
             audio, sr_used = record_block(BLOCK_SEC)
             _log_timing("capture", time.perf_counter() - capture_t0)
