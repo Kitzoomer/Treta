@@ -1,7 +1,8 @@
-import argparse
-import json
 from __future__ import annotations
 
+import argparse
+import json
+import logging
 import os
 import queue
 import threading
@@ -13,15 +14,10 @@ import numpy as np
 import sounddevice as sd
 import webrtcvad
 from openai import OpenAI
-import pyttsx3
-import pythoncom
-import argparse
-import json
-import logging
-import wave
 
 
-DATA_DIR = Path("data")
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 TARGET_SAMPLE_RATE = 16000
 FRAME_MS = 30
 FRAME_SAMPLES = int(TARGET_SAMPLE_RATE * FRAME_MS / 1000)
@@ -30,14 +26,16 @@ FRAME_SAMPLES = int(TARGET_SAMPLE_RATE * FRAME_MS / 1000)
 TTS_COOLDOWN_SEC = 0.8
 
 
-CONFIG_PATH = os.environ.get("TRETA_CONFIG", "config.json")
+CONFIG_PATH = Path(os.environ.get("TRETA_CONFIG", BASE_DIR / "config.json"))
 
 
-def load_config(path: str) -> dict:
+def load_config(path: Path) -> dict:
     try:
-        with open(path, "r", encoding="utf-8-sig") as f:
+        with path.open("r", encoding="utf-8-sig") as f:
             return json.load(f)
     except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
         return {}
 
 
@@ -52,8 +50,7 @@ MAX_RECORD_SEC = float(_config.get("max_record_sec", 20))
 END_SILENCE_SEC = float(_config.get("end_silence_sec", 1.8))
 
 whisper = None
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-client = None
+client: OpenAI | None = None
 
 audio_q = queue.Queue()
 
@@ -64,25 +61,13 @@ tts_stop = threading.Event()
 tts_speaking = threading.Event()
 tts_last_end = 0.0
 
-BASE_DIR = os.path.dirname(__file__)
-CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-LOG_DIR = os.path.join(BASE_DIR, "logs")
-LOG_PATH = os.path.join(LOG_DIR, "treta.log")
-DEBUG_WAV_PATH = os.path.join(BASE_DIR, "data", "debug_last.wav")
-
+LOG_DIR = BASE_DIR / "logs"
+LOG_PATH = LOG_DIR / "treta.log"
 logger = logging.getLogger("treta")
 
 
-def _load_config() -> dict:
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
 def _setup_logging():
-    os.makedirs(LOG_DIR, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     logger.setLevel(logging.INFO)
     if logger.handlers:
         return
@@ -96,51 +81,10 @@ def _log_timing(stage: str, seconds: float):
     logger.info("%s: %.2fs", stage, seconds)
 
 
-def _write_debug_wav(audio: np.ndarray, sr: int, debug: bool):
-    import numpy as np
-
-    if not debug:
-        return
-    if audio is None or audio.size == 0:
-        return
-    os.makedirs(os.path.dirname(DEBUG_WAV_PATH), exist_ok=True)
-    a = np.clip(audio.astype(np.float32), -1.0, 1.0)
-    pcm16 = (a * 32767.0).astype(np.int16)
-    with wave.open(DEBUG_WAV_PATH, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        wf.writeframes(pcm16.tobytes())
-
-
-def _rms(x: np.ndarray) -> float:
-    import numpy as np
-
-    x = x.astype(np.float32)
-    return float(np.sqrt(np.mean(x * x) + 1e-12))
-
-
-def _run_vad_pass(audio: np.ndarray, sr: int, cfg: dict) -> bool:
-    if audio is None or audio.size == 0:
-        return False
-    noise_sec = float(cfg.get("noise_calib_sec", 0.2))
-    thresh_mult = float(cfg.get("thresh_mult", 2.8))
-    noise_frames = max(1, int(sr * noise_sec))
-    noise_slice = audio[:noise_frames]
-    baseline = _rms(noise_slice)
-    threshold = max(baseline * thresh_mult, 0.006)
-    block = max(1, int(sr * 0.05))
-    for i in range(0, len(audio), block):
-        if _rms(audio[i:i + block]) >= threshold:
-            return True
-    return False
 
 
 def _resample_to_16k(x: np.ndarray, sr_in: int) -> np.ndarray:
     sr_out = TARGET_SAMPLE_RATE
-    import numpy as np
-
-    sr_out = 16000
     if sr_in == sr_out:
         return x.astype(np.float32)
 
@@ -248,9 +192,10 @@ def save_debug_segments(segments: list[dict], path: Path) -> None:
 def tts_worker():
     """Hilo dedicado a TTS. Inicializa COM para evitar silencios/bloqueos en Windows."""
     global tts_last_end
-    import pyttsx3
-    import pythoncom
     try:
+        import pyttsx3
+        import pythoncom
+
         pythoncom.CoInitialize()
         engine = pyttsx3.init(driverName="sapi5")
         engine.setProperty("rate", 175)
@@ -287,6 +232,8 @@ def tts_worker():
         print("❌ TTS worker no pudo iniciar:", e)
     finally:
         try:
+            import pythoncom
+
             pythoncom.CoUninitialize()
         except Exception:
             pass
@@ -297,6 +244,8 @@ def speak(text: str):
     if not text:
         return
     s = text.strip()
+    if not s:
+        return
     while s:
         tts_q.put(s[:240])
         s = s[240:]
@@ -345,8 +294,6 @@ def record_utterance(
     Graba hasta detectar fin de frase usando VAD y hangover.
     Devuelve (audio_16k, segments, speech_detected).
     """
-    import numpy as np
-    import sounddevice as sd
     # Limpia cola por si quedó basura
     _drain_queue(audio_q)
 
@@ -455,16 +402,26 @@ def extract_query(text: str):
 
 
 def ask_chatgpt(user_query: str) -> str:
+    global client
     if not os.environ.get("OPENAI_API_KEY"):
         return "API key no configurada."
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "Eres Treta la Torreta: técnica, clara y creativa. Responde en español."},
-            {"role": "user", "content": user_query},
-        ],
-        temperature=0.4,
-    )
+    if client is None:
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Eres Treta la Torreta: técnica, clara y creativa. Responde en español.",
+                },
+                {"role": "user", "content": user_query},
+            ],
+            temperature=0.4,
+        )
+    except Exception:
+        logger.exception("Error consultando OpenAI")
+        return "Tuve un problema al consultar el modelo. Intenta de nuevo."
     return (resp.choices[0].message.content or "").strip()
 
 
@@ -473,25 +430,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--list-mics", action="store_true", help="Listar micrófonos disponibles y salir.")
     parser.add_argument("--mic", type=int, help="ID de micrófono a usar (override).")
     parser.add_argument("--debug", action="store_true", help="Guardar audio/segmentos de depuración.")
-    return parser.parse_args()
-
-
-def main():
-    global tts_last_end
-    global whisper
-    global client
-
-    parser = argparse.ArgumentParser(description="Treta Voice")
-    parser.add_argument("--debug", action="store_true", help="Guarda debug_last.wav y logs detallados.")
     parser.add_argument(
         "--debug-dummy",
         action="store_true",
         help="Simula capture/VAD/STT/TTS sin micro y genera logs.",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    cfg = _load_config()
+
+def main():
+    global tts_last_end
+
+    cfg = load_config(CONFIG_PATH)
     _setup_logging()
+    args = parse_args()
     logger.info("Treta Voice iniciando.")
     logger.info("sample_rate: %s", cfg.get("sample_rate", "unknown"))
     logger.info("mic_device_index: %s", cfg.get("mic_device_index", "unknown"))
@@ -518,18 +470,13 @@ def main():
             _log_timing(stage, time.perf_counter() - t0)
         return
 
-    args = parse_args()
     if args.list_mics:
         print_input_devices()
         return
 
-    import numpy as np
-    import sounddevice as sd
     from faster_whisper import WhisperModel
-    from openai import OpenAI
 
     whisper = WhisperModel("small", device="cpu", compute_type="int8")
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
     # Limpieza inicial (por si quedaron cosas de ejecuciones previas)
     _drain_queue(audio_q)
@@ -633,14 +580,6 @@ def main():
                 save_debug_segments(segments, DATA_DIR / "debug_last_segments.json")
             if not speech_detected or audio_16k.size == 0:
                 continue
-            capture_t0 = time.perf_counter()
-            audio, sr_used = record_block(BLOCK_SEC)
-            _log_timing("capture", time.perf_counter() - capture_t0)
-            vad_t0 = time.perf_counter()
-            _run_vad_pass(audio, sr_used, cfg)
-            _log_timing("VAD", time.perf_counter() - vad_t0)
-            _write_debug_wav(audio, sr_used, args.debug)
-            audio_16k = _resample_to_16k(audio, sr_used)
 
             stt_t0 = time.perf_counter()
             text = transcribe(audio_16k)
