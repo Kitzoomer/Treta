@@ -3,7 +3,23 @@ import json
 import threading
 import random
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import messagebox, filedialog
+
+import customtkinter as ctk
+
+from ui_theme import (
+    MECH_BG,
+    MECH_BORDER,
+    MECH_BTN_HOVER,
+    MECH_CARD,
+    MECH_CARD_2,
+    MECH_MUTED,
+    MECH_PANEL,
+    MECH_RED,
+    MECH_RED_DARK,
+    MECH_TEXT,
+    apply_treta_theme,
+)
 import re
 
 from judge_ai import RulesCache, answer_question
@@ -123,14 +139,17 @@ def guess_card_name_from_text(text: str) -> str | None:
     return None
 
 
-class MagicHub(tk.Tk):
+class MagicHub(ctk.CTk):
     def __init__(self):
         super().__init__()
         ensure_dirs()
 
+        apply_treta_theme()
+
         self.title("TRETA · Magic Hub (Commander)")
         self.geometry("1200x720")
         self.minsize(1050, 650)
+        self.configure(fg_color=MECH_BG)
 
         self.state_path = os.path.join(DATA_DIR, "current_game.json")
         self.history_path = os.path.join(DATA_DIR, "history.jsonl")
@@ -234,47 +253,109 @@ class MagicHub(tk.Tk):
 
     # --------------------- UI ---------------------
     def _init_styles(self):
-        style = ttk.Style()
-        try:
-            style.theme_use("vista")
-        except Exception:
-            style.theme_use("clam")
-        style.configure("TButton", padding=(10, 6))
-        style.configure("Header.TLabel", font=("Segoe UI", 12, "bold"))
-        style.configure("Big.TLabel", font=("Segoe UI", 16, "bold"))
-        style.configure("Small.TLabel", font=("Segoe UI", 10))
+        # Reservado para estilos de widgets Tk clásicos si se necesitan.
+        pass
 
     def _build_ui(self):
-        top = ttk.Frame(self, padding=10)
-        top.pack(fill="x")
+        top = ctk.CTkFrame(self, fg_color=MECH_PANEL, corner_radius=18)
+        top.pack(fill="x", padx=18, pady=(18, 10))
+        top.grid_columnconfigure(10, weight=1)
 
-        ttk.Label(top, text="TRETA · Magic Hub (Commander)", style="Header.TLabel").pack(side="left")
+        ctk.CTkLabel(
+            top,
+            text="TRETA · Magic Hub (Commander)",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 16, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=12)
 
-        ttk.Label(top, text="Jugadores:", padding=(20, 0)).pack(side="left")
+        ctk.CTkLabel(
+            top,
+            text="Jugadores:",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=0, column=1, sticky="w", padx=(20, 6))
         self.players_var = tk.StringVar(value=str(self.game["meta"]["players"]))
-        ttk.Combobox(top, textvariable=self.players_var, values=["2", "4"], width=3, state="readonly").pack(side="left")
-        ttk.Button(top, text="Aplicar", command=self._apply_players).pack(side="left", padx=6)
+        ctk.CTkComboBox(
+            top,
+            values=["2", "4"],
+            variable=self.players_var,
+            width=80,
+            state="readonly",
+            fg_color=MECH_CARD,
+            border_color=MECH_BORDER,
+            button_color=MECH_CARD_2,
+            text_color=MECH_TEXT,
+        ).grid(row=0, column=2, sticky="w")
+        ctk.CTkButton(
+            top,
+            text="Aplicar",
+            command=self._apply_players,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).grid(row=0, column=3, sticky="w", padx=8)
 
-        ttk.Label(top, text="Vida inicial:", padding=(20, 0)).pack(side="left")
+        ctk.CTkLabel(
+            top,
+            text="Vida inicial:",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 12, "bold"),
+        ).grid(row=0, column=4, sticky="w", padx=(20, 6))
         self.startlife_var = tk.StringVar(value=str(self.game["meta"]["starting_life"]))
-        ttk.Entry(top, textvariable=self.startlife_var, width=5).pack(side="left")
-        ttk.Button(top, text="Set", command=self._apply_startlife).pack(side="left", padx=6)
+        ctk.CTkEntry(
+            top,
+            textvariable=self.startlife_var,
+            width=90,
+            fg_color=MECH_CARD,
+            border_color=MECH_BORDER,
+            text_color=MECH_TEXT,
+        ).grid(row=0, column=5, sticky="w")
+        ctk.CTkButton(
+            top,
+            text="Set",
+            command=self._apply_startlife,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).grid(row=0, column=6, sticky="w", padx=8)
 
-        ttk.Button(top, text="Reset partida", command=self._reset_game).pack(side="right")
-        ttk.Button(top, text="Undo", command=self._undo).pack(side="right", padx=8)
+        ctk.CTkButton(
+            top,
+            text="Undo",
+            command=self._undo,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).grid(row=0, column=8, sticky="e", padx=(8, 6))
+        ctk.CTkButton(
+            top,
+            text="Reset partida",
+            command=self._reset_game,
+            fg_color=MECH_RED,
+            hover_color=MECH_RED_DARK,
+            text_color="white",
+            corner_radius=12,
+        ).grid(row=0, column=9, sticky="e", padx=(0, 12))
 
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=10, pady=10)
+        self.tabs = ctk.CTkTabview(
+            self,
+            fg_color=MECH_PANEL,
+            segmented_button_fg_color=MECH_CARD,
+            segmented_button_selected_color=MECH_RED,
+            segmented_button_unselected_color=MECH_CARD_2,
+            segmented_button_selected_hover_color=MECH_RED_DARK,
+            segmented_button_unselected_hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+        )
+        self.tabs.pack(fill="both", expand=True, padx=18, pady=(0, 18))
 
-        self.tab_game = ttk.Frame(nb)
-        self.tab_judge = ttk.Frame(nb)
-        self.tab_music = ttk.Frame(nb)
-        self.tab_history = ttk.Frame(nb)
-
-        nb.add(self.tab_game, text="Juego")
-        nb.add(self.tab_judge, text="Juez")
-        nb.add(self.tab_music, text="Música")
-        nb.add(self.tab_history, text="Historial")
+        self.tab_game = self.tabs.add("Juego")
+        self.tab_judge = self.tabs.add("Juez")
+        self.tab_music = self.tabs.add("Música")
+        self.tab_history = self.tabs.add("Historial")
 
         self._build_tab_game()
         self._build_tab_judge()
@@ -283,23 +364,59 @@ class MagicHub(tk.Tk):
 
     # --------------------- Game tab ---------------------
     def _build_tab_game(self):
-        root = ttk.Frame(self.tab_game, padding=10)
-        root.pack(fill="both", expand=True)
+        root = ctk.CTkFrame(self.tab_game, fg_color=MECH_PANEL, corner_radius=18)
+        root.pack(fill="both", expand=True, padx=12, pady=12)
 
-        turnbar = ttk.Frame(root)
-        turnbar.pack(fill="x", pady=(0, 10))
-        self.turn_label = ttk.Label(turnbar, text="", style="Header.TLabel")
-        self.turn_label.pack(side="left")
+        turnbar = ctk.CTkFrame(root, fg_color=MECH_CARD_2, corner_radius=16)
+        turnbar.pack(fill="x", pady=(0, 10), padx=8)
+        turnbar.grid_columnconfigure(4, weight=1)
 
-        ttk.Button(turnbar, text="🎲 Quién empieza", command=self._roll_who_starts).pack(side="right")
-        ttk.Button(turnbar, text="Siguiente fase", command=self._next_phase).pack(side="right", padx=6)
-        ttk.Button(turnbar, text="Siguiente turno", command=self._next_turn).pack(side="right", padx=6)
+        self.turn_label = ctk.CTkLabel(
+            turnbar,
+            text="",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 13, "bold"),
+        )
+        self.turn_label.grid(row=0, column=0, sticky="w", padx=12, pady=10)
 
-        self.phase_label = ttk.Label(turnbar, text="", style="Small.TLabel", padding=(20, 0))
-        self.phase_label.pack(side="left")
+        self.phase_label = ctk.CTkLabel(
+            turnbar,
+            text="",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 11),
+        )
+        self.phase_label.grid(row=0, column=1, sticky="w", padx=(8, 12))
 
-        self.players_frame = ttk.Frame(root)
-        self.players_frame.pack(fill="both", expand=True)
+        ctk.CTkButton(
+            turnbar,
+            text="Siguiente turno",
+            command=self._next_turn,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).grid(row=0, column=2, sticky="e", padx=6, pady=8)
+        ctk.CTkButton(
+            turnbar,
+            text="Siguiente fase",
+            command=self._next_phase,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).grid(row=0, column=3, sticky="e", padx=6, pady=8)
+        ctk.CTkButton(
+            turnbar,
+            text="🎲 Quién empieza",
+            command=self._roll_who_starts,
+            fg_color=MECH_RED,
+            hover_color=MECH_RED_DARK,
+            text_color="white",
+            corner_radius=12,
+        ).grid(row=0, column=5, sticky="e", padx=12, pady=8)
+
+        self.players_frame = ctk.CTkFrame(root, fg_color=MECH_PANEL, corner_radius=18)
+        self.players_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
     def _apply_players(self):
         players = int(self.players_var.get())
@@ -388,11 +505,17 @@ class MagicHub(tk.Tk):
 
     def _build_player_card(self, parent, idx: int):
         p = self.game["players"][idx]
-        card = ttk.Frame(parent, padding=10, relief="ridge")
-        card.columnconfigure(0, weight=1)
+        card = ctk.CTkFrame(parent, fg_color=MECH_CARD, corner_radius=16)
+        card.grid_columnconfigure(0, weight=1)
 
         name_var = tk.StringVar(value=p["name"])
-        ttk.Entry(card, textvariable=name_var).grid(row=0, column=0, sticky="ew")
+        ctk.CTkEntry(
+            card,
+            textvariable=name_var,
+            fg_color=MECH_CARD_2,
+            border_color=MECH_BORDER,
+            text_color=MECH_TEXT,
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 4))
 
         def save_name():
             self._snapshot()
@@ -400,9 +523,22 @@ class MagicHub(tk.Tk):
             self._log_event("set_name", {"player": idx, "name": self.game["players"][idx]["name"]})
             self._save_game()
 
-        ttk.Button(card, text="Guardar nombre", command=save_name).grid(row=0, column=1, padx=6)
+        ctk.CTkButton(
+            card,
+            text="Guardar nombre",
+            command=save_name,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).grid(row=0, column=1, padx=10, pady=(10, 4))
 
-        ttk.Label(card, text=f"Vida: {p['life']}", style="Big.TLabel").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        ctk.CTkLabel(
+            card,
+            text=f"Vida: {p['life']}",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 16, "bold"),
+        ).grid(row=1, column=0, sticky="w", padx=10, pady=(8, 0))
 
         def set_life(delta):
             self._snapshot()
@@ -411,15 +547,29 @@ class MagicHub(tk.Tk):
             self._sync_ui_from_game()
             self._save_game()
 
-        btnrow = ttk.Frame(card)
-        btnrow.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        btnrow = ctk.CTkFrame(card, fg_color="transparent")
+        btnrow.grid(row=2, column=0, sticky="w", padx=10, pady=(6, 0))
         for txt, d in [("-5", -5), ("-1", -1), ("+1", 1), ("+5", 5)]:
-            ttk.Button(btnrow, text=txt, command=lambda dd=d: set_life(dd)).pack(side="left", padx=3)
+            ctk.CTkButton(
+                btnrow,
+                text=txt,
+                command=lambda dd=d: set_life(dd),
+                width=48,
+                fg_color=MECH_CARD_2,
+                hover_color=MECH_BTN_HOVER,
+                text_color=MECH_TEXT,
+                corner_radius=12,
+            ).pack(side="left", padx=3)
 
-        pe = ttk.Frame(card)
-        pe.grid(row=3, column=0, sticky="w", pady=(10, 0))
+        pe = ctk.CTkFrame(card, fg_color="transparent")
+        pe.grid(row=3, column=0, sticky="w", padx=10, pady=(10, 0))
 
-        ttk.Label(pe, text=f"Poison: {p['poison']}").pack(side="left")
+        ctk.CTkLabel(
+            pe,
+            text=f"Poison: {p['poison']}",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
 
         def poison(delta):
             self._snapshot()
@@ -428,10 +578,33 @@ class MagicHub(tk.Tk):
             self._sync_ui_from_game()
             self._save_game()
 
-        ttk.Button(pe, text="-", command=lambda: poison(-1)).pack(side="left", padx=4)
-        ttk.Button(pe, text="+", command=lambda: poison(1)).pack(side="left", padx=4)
+        ctk.CTkButton(
+            pe,
+            text="-",
+            command=lambda: poison(-1),
+            width=28,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=10,
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            pe,
+            text="+",
+            command=lambda: poison(1),
+            width=28,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=10,
+        ).pack(side="left", padx=4)
 
-        ttk.Label(pe, text=f"   Energy: {p['energy']}").pack(side="left")
+        ctk.CTkLabel(
+            pe,
+            text=f"   Energy: {p['energy']}",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
 
         def energy(delta):
             self._snapshot()
@@ -440,12 +613,35 @@ class MagicHub(tk.Tk):
             self._sync_ui_from_game()
             self._save_game()
 
-        ttk.Button(pe, text="-", command=lambda: energy(-1)).pack(side="left", padx=4)
-        ttk.Button(pe, text="+", command=lambda: energy(1)).pack(side="left", padx=4)
+        ctk.CTkButton(
+            pe,
+            text="-",
+            command=lambda: energy(-1),
+            width=28,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=10,
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            pe,
+            text="+",
+            command=lambda: energy(1),
+            width=28,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=10,
+        ).pack(side="left", padx=4)
 
-        tax = ttk.Frame(card)
-        tax.grid(row=4, column=0, sticky="w", pady=(10, 0))
-        ttk.Label(tax, text=f"Impuesto comandante: +{p['cmd_tax']}").pack(side="left")
+        tax = ctk.CTkFrame(card, fg_color="transparent")
+        tax.grid(row=4, column=0, sticky="w", padx=10, pady=(10, 10))
+        ctk.CTkLabel(
+            tax,
+            text=f"Impuesto comandante: +{p['cmd_tax']}",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
 
         def cmd_died():
             self._snapshot()
@@ -461,35 +657,81 @@ class MagicHub(tk.Tk):
             self._sync_ui_from_game()
             self._save_game()
 
-        ttk.Button(tax, text="Commander murió (+2)", command=cmd_died).pack(side="left", padx=6)
-        ttk.Button(tax, text="Reset impuesto", command=cmd_tax_reset).pack(side="left", padx=6)
+        ctk.CTkButton(
+            tax,
+            text="Commander murió (+2)",
+            command=cmd_died,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left", padx=6)
+        ctk.CTkButton(
+            tax,
+            text="Reset impuesto",
+            command=cmd_tax_reset,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left", padx=6)
 
         return card
 
     def _build_cmd_damage_panel(self, parent):
         players = self.game["meta"]["players"]
-        frame = ttk.Frame(parent, padding=10, relief="ridge")
-        ttk.Label(frame, text="Commander Damage", style="Header.TLabel").pack(anchor="w")
+        frame = ctk.CTkFrame(parent, fg_color=MECH_CARD, corner_radius=16)
+        ctk.CTkLabel(
+            frame,
+            text="Commander Damage",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 13, "bold"),
+        ).pack(anchor="w", padx=10, pady=(10, 6))
 
-        grid = ttk.Frame(frame)
-        grid.pack(fill="x", pady=(6, 0))
+        grid = ctk.CTkFrame(frame, fg_color="transparent")
+        grid.pack(fill="x", padx=6, pady=(0, 6))
 
-        ttk.Label(grid, text="Ataque\\Defensa").grid(row=0, column=0, padx=4, pady=4)
+        ctk.CTkLabel(
+            grid,
+            text="Ataque\\Defensa",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 10, "bold"),
+        ).grid(row=0, column=0, padx=4, pady=4)
         for d in range(players):
-            ttk.Label(grid, text=f"J{d+1}", style="Small.TLabel").grid(row=0, column=d+1, padx=4, pady=4)
+            ctk.CTkLabel(
+                grid,
+                text=f"J{d+1}",
+                text_color=MECH_MUTED,
+                font=("Segoe UI", 10, "bold"),
+            ).grid(row=0, column=d + 1, padx=4, pady=4)
 
         for a in range(players):
-            ttk.Label(grid, text=f"J{a+1}").grid(row=a+1, column=0, padx=4, pady=4, sticky="e")
+            ctk.CTkLabel(
+                grid,
+                text=f"J{a+1}",
+                text_color=MECH_MUTED,
+                font=("Segoe UI", 10, "bold"),
+            ).grid(row=a + 1, column=0, padx=4, pady=4, sticky="e")
             for d in range(players):
                 if a == d:
-                    ttk.Label(grid, text="—").grid(row=a+1, column=d+1, padx=4, pady=4)
+                    ctk.CTkLabel(
+                        grid,
+                        text="—",
+                        text_color=MECH_MUTED,
+                        font=("Segoe UI", 10),
+                    ).grid(row=a + 1, column=d + 1, padx=4, pady=4)
                     continue
 
                 val = self.game["cmd_damage"][a][d]
-                cell = ttk.Frame(grid)
-                cell.grid(row=a+1, column=d+1, padx=3, pady=3)
+                cell = ctk.CTkFrame(grid, fg_color=MECH_CARD_2, corner_radius=12)
+                cell.grid(row=a + 1, column=d + 1, padx=3, pady=3, sticky="ew")
 
-                ttk.Label(cell, text=str(val)).pack(side="left", padx=4)
+                ctk.CTkLabel(
+                    cell,
+                    text=str(val),
+                    text_color=MECH_TEXT,
+                    font=("Segoe UI", 11, "bold"),
+                ).pack(side="left", padx=6, pady=6)
 
                 def add(att=a, de=d, delta=1):
                     self._snapshot()
@@ -498,10 +740,36 @@ class MagicHub(tk.Tk):
                     self._sync_ui_from_game()
                     self._save_game()
 
-                ttk.Button(cell, text="-", width=2, command=lambda att=a, de=d: add(att, de, -1)).pack(side="left")
-                ttk.Button(cell, text="+", width=2, command=lambda att=a, de=d: add(att, de, 1)).pack(side="left")
+                ctk.CTkButton(
+                    cell,
+                    text="-",
+                    width=28,
+                    command=lambda att=a, de=d: add(att, de, -1),
+                    fg_color=MECH_CARD,
+                    hover_color=MECH_BTN_HOVER,
+                    text_color=MECH_TEXT,
+                    corner_radius=10,
+                ).pack(side="left", padx=4, pady=4)
+                ctk.CTkButton(
+                    cell,
+                    text="+",
+                    width=28,
+                    command=lambda att=a, de=d: add(att, de, 1),
+                    fg_color=MECH_CARD,
+                    hover_color=MECH_BTN_HOVER,
+                    text_color=MECH_TEXT,
+                    corner_radius=10,
+                ).pack(side="left", padx=4, pady=4)
 
-        ttk.Button(frame, text="Reset commander damage", command=self._reset_cmd_damage).pack(anchor="w", pady=(10, 0))
+        ctk.CTkButton(
+            frame,
+            text="Reset commander damage",
+            command=self._reset_cmd_damage,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(anchor="w", padx=10, pady=(6, 10))
         return frame
 
     def _reset_cmd_damage(self):
@@ -515,12 +783,12 @@ class MagicHub(tk.Tk):
         self._save_game()
 
     def _build_players_2(self):
-        container = ttk.Frame(self.players_frame)
+        container = ctk.CTkFrame(self.players_frame, fg_color="transparent")
         container.pack(fill="both", expand=True)
-        container.columnconfigure(0, weight=1)
-        container.columnconfigure(1, weight=1)
-        container.rowconfigure(0, weight=1)
-        container.rowconfigure(1, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_columnconfigure(1, weight=1)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_rowconfigure(1, weight=1)
 
         self._build_player_card(container, 0).grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
         self._build_player_card(container, 1).grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
@@ -528,12 +796,12 @@ class MagicHub(tk.Tk):
         self._build_cmd_damage_panel(container).grid(row=1, column=0, columnspan=2, sticky="nsew", padx=6, pady=6)
 
     def _build_players_4(self):
-        container = ttk.Frame(self.players_frame)
+        container = ctk.CTkFrame(self.players_frame, fg_color="transparent")
         container.pack(fill="both", expand=True)
         for c in range(2):
-            container.columnconfigure(c, weight=1)
+            container.grid_columnconfigure(c, weight=1)
         for r in range(3):
-            container.rowconfigure(r, weight=1)
+            container.grid_rowconfigure(r, weight=1)
 
         for i in range(4):
             self._build_player_card(container, i).grid(row=i // 2, column=i % 2, sticky="nsew", padx=6, pady=6)
@@ -542,54 +810,124 @@ class MagicHub(tk.Tk):
 
     # --------------------- Judge tab ---------------------
     def _build_tab_judge(self):
-        root = ttk.Frame(self.tab_judge, padding=10)
-        root.pack(fill="both", expand=True)
-        root.columnconfigure(0, weight=1)
-        root.columnconfigure(1, weight=1)
-        root.rowconfigure(1, weight=1)
+        root = ctk.CTkFrame(self.tab_judge, fg_color=MECH_PANEL, corner_radius=18)
+        root.pack(fill="both", expand=True, padx=12, pady=12)
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_columnconfigure(1, weight=1)
+        root.grid_rowconfigure(1, weight=1)
 
-        left = ttk.Frame(root, padding=10, relief="ridge")
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        ttk.Label(left, text="Juez (Reglas)", style="Header.TLabel").pack(anchor="w")
+        left = ctk.CTkFrame(root, fg_color=MECH_CARD, corner_radius=16)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6), pady=(0, 6))
+        left.grid_rowconfigure(3, weight=1)
+        ctk.CTkLabel(
+            left,
+            text="Juez (Reglas)",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 13, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 6))
 
-        self.rules_entry = ttk.Entry(left)
-        self.rules_entry.pack(fill="x", pady=(8, 6))
+        self.rules_entry = ctk.CTkEntry(
+            left,
+            fg_color=MECH_CARD_2,
+            border_color=MECH_BORDER,
+            text_color=MECH_TEXT,
+        )
+        self.rules_entry.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 6))
 
-        ttk.Button(left, text="Responder (IA)", command=self._judge_answer).pack(anchor="w")
+        ctk.CTkButton(
+            left,
+            text="Responder (IA)",
+            command=self._judge_answer,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).grid(row=2, column=0, sticky="w", padx=12, pady=(0, 8))
 
-        out_wrap = ttk.Frame(left)
-        out_wrap.pack(fill="both", expand=True, pady=(8, 0))
-        self.rules_out = tk.Text(out_wrap, height=18, wrap="word", font=("Segoe UI", 10))
-        ys = ttk.Scrollbar(out_wrap, orient="vertical", command=self.rules_out.yview)
+        out_wrap = ctk.CTkFrame(left, fg_color=MECH_CARD_2, corner_radius=12)
+        out_wrap.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        out_wrap.grid_rowconfigure(0, weight=1)
+        out_wrap.grid_columnconfigure(0, weight=1)
+        self.rules_out = tk.Text(
+            out_wrap,
+            height=18,
+            wrap="word",
+            font=("Segoe UI", 10),
+            bg=MECH_BG,
+            fg=MECH_TEXT,
+            insertbackground=MECH_TEXT,
+            relief="flat",
+        )
+        ys = ctk.CTkScrollbar(out_wrap, orientation="vertical", command=self.rules_out.yview)
         self.rules_out.configure(yscrollcommand=ys.set)
-        self.rules_out.pack(side="left", fill="both", expand=True)
-        ys.pack(side="right", fill="y")
+        self.rules_out.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=6)
+        ys.grid(row=0, column=1, sticky="ns", pady=6, padx=(0, 6))
 
-        right = ttk.Frame(root, padding=10, relief="ridge")
-        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        ttk.Label(right, text="Cartas (Scryfall + Gatherer)", style="Header.TLabel").pack(anchor="w")
+        right = ctk.CTkFrame(root, fg_color=MECH_CARD, corner_radius=16)
+        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0), pady=(0, 6))
+        right.grid_rowconfigure(3, weight=1)
+        ctk.CTkLabel(
+            right,
+            text="Cartas (Scryfall + Gatherer)",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 13, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 6))
 
-        self.card_entry = ttk.Entry(right)
-        self.card_entry.pack(fill="x", pady=(8, 6))
-        btns = ttk.Frame(right)
-        btns.pack(fill="x")
-        ttk.Button(btns, text="Buscar carta", command=self._card_search).pack(side="left")
-        ttk.Button(btns, text="Abrir Gatherer", command=self._open_gatherer).pack(side="left", padx=8)
+        self.card_entry = ctk.CTkEntry(
+            right,
+            fg_color=MECH_CARD_2,
+            border_color=MECH_BORDER,
+            text_color=MECH_TEXT,
+        )
+        self.card_entry.grid(row=1, column=0, sticky="ew", padx=12, pady=(0, 6))
 
-        card_wrap = ttk.Frame(right)
-        card_wrap.pack(fill="both", expand=True, pady=(8, 0))
-        self.card_out = tk.Text(card_wrap, height=18, wrap="word", font=("Segoe UI", 10))
-        ys2 = ttk.Scrollbar(card_wrap, orient="vertical", command=self.card_out.yview)
+        btns = ctk.CTkFrame(right, fg_color="transparent")
+        btns.grid(row=2, column=0, sticky="w", padx=12, pady=(0, 8))
+        ctk.CTkButton(
+            btns,
+            text="Buscar carta",
+            command=self._card_search,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left")
+        ctk.CTkButton(
+            btns,
+            text="Abrir Gatherer",
+            command=self._open_gatherer,
+            fg_color=MECH_CARD_2,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left", padx=8)
+
+        card_wrap = ctk.CTkFrame(right, fg_color=MECH_CARD_2, corner_radius=12)
+        card_wrap.grid(row=3, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        card_wrap.grid_rowconfigure(0, weight=1)
+        card_wrap.grid_columnconfigure(0, weight=1)
+        self.card_out = tk.Text(
+            card_wrap,
+            height=18,
+            wrap="word",
+            font=("Segoe UI", 10),
+            bg=MECH_BG,
+            fg=MECH_TEXT,
+            insertbackground=MECH_TEXT,
+            relief="flat",
+        )
+        ys2 = ctk.CTkScrollbar(card_wrap, orientation="vertical", command=self.card_out.yview)
         self.card_out.configure(yscrollcommand=ys2.set)
-        self.card_out.pack(side="left", fill="both", expand=True)
-        ys2.pack(side="right", fill="y")
+        self.card_out.grid(row=0, column=0, sticky="nsew", padx=(6, 0), pady=6)
+        ys2.grid(row=0, column=1, sticky="ns", pady=6, padx=(0, 6))
 
-        hint = ttk.Label(
+        hint = ctk.CTkLabel(
             root,
             text="Modo juez: Commander por defecto (si no indicas otro formato). No muestra fuentes, solo respuesta.",
-            style="Small.TLabel",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 10),
         )
-        hint.grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        hint.grid(row=1, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 6))
 
     def _judge_answer(self):
         q = (self.rules_entry.get() or "").strip()
@@ -649,37 +987,106 @@ class MagicHub(tk.Tk):
 
     # --------------------- Music tab ---------------------
     def _build_tab_music(self):
-        root = ttk.Frame(self.tab_music, padding=10)
-        root.pack(fill="both", expand=True)
+        root = ctk.CTkFrame(self.tab_music, fg_color=MECH_PANEL, corner_radius=18)
+        root.pack(fill="both", expand=True, padx=12, pady=12)
 
-        ttk.Label(root, text="Música (local)", style="Header.TLabel").pack(anchor="w")
-        ttk.Label(root, text=f"Carpeta: {MUSIC_DIR}", style="Small.TLabel").pack(anchor="w", pady=(0, 10))
+        ctk.CTkLabel(
+            root,
+            text="Música (local)",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 13, "bold"),
+        ).pack(anchor="w", padx=12, pady=(12, 4))
+        ctk.CTkLabel(
+            root,
+            text=f"Carpeta: {MUSIC_DIR}",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 10),
+        ).pack(anchor="w", padx=12, pady=(0, 10))
 
-        controls = ttk.Frame(root)
-        controls.pack(fill="x")
+        controls = ctk.CTkFrame(root, fg_color="transparent")
+        controls.pack(fill="x", padx=12)
 
-        ttk.Button(controls, text="Cargar carpeta", command=self._music_load_folder).pack(side="left")
-        ttk.Button(controls, text="⏯ Play/Pause", command=self._music_toggle).pack(side="left", padx=8)
-        ttk.Button(controls, text="⏭ Next", command=self._music_next).pack(side="left")
-        ttk.Button(controls, text="🔀 Shuffle", command=self._music_shuffle).pack(side="left", padx=8)
+        ctk.CTkButton(
+            controls,
+            text="Cargar carpeta",
+            command=self._music_load_folder,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left")
+        ctk.CTkButton(
+            controls,
+            text="⏯ Play/Pause",
+            command=self._music_toggle,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left", padx=8)
+        ctk.CTkButton(
+            controls,
+            text="⏭ Next",
+            command=self._music_next,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left")
+        ctk.CTkButton(
+            controls,
+            text="🔀 Shuffle",
+            command=self._music_shuffle,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left", padx=8)
 
-        ttk.Label(controls, text="Volumen").pack(side="left", padx=(20, 6))
+        ctk.CTkLabel(
+            controls,
+            text="Volumen",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 10),
+        ).pack(side="left", padx=(20, 6))
         self.vol_var = tk.DoubleVar(value=self.music_volume)
-        vol = ttk.Scale(controls, from_=0.0, to=1.0, variable=self.vol_var, command=self._music_set_volume)
+        vol = ctk.CTkSlider(
+            controls,
+            from_=0.0,
+            to=1.0,
+            variable=self.vol_var,
+            command=self._music_set_volume,
+            fg_color=MECH_CARD,
+            progress_color=MECH_RED,
+            button_color=MECH_RED,
+        )
         vol.pack(side="left", fill="x", expand=True)
 
-        self.music_status = ttk.Label(root, text="Backend: (no cargado)", style="Small.TLabel")
-        self.music_status.pack(anchor="w", pady=(10, 0))
+        self.music_status = ctk.CTkLabel(
+            root,
+            text="Backend: (no cargado)",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 10),
+        )
+        self.music_status.pack(anchor="w", padx=12, pady=(10, 0))
 
-        self.music_list = tk.Listbox(root, height=18)
-        self.music_list.pack(fill="both", expand=True, pady=(8, 0))
+        self.music_list = tk.Listbox(
+            root,
+            height=18,
+            bg=MECH_BG,
+            fg=MECH_TEXT,
+            highlightthickness=0,
+            relief="flat",
+        )
+        self.music_list.pack(fill="both", expand=True, padx=12, pady=(8, 0))
 
-        hint = ttk.Label(
+        hint = ctk.CTkLabel(
             root,
             text="Nota: para mp3/ogg recomiendo instalar pygame:  pip install pygame\nSi no, Treta lo indicará aquí.",
-            style="Small.TLabel",
+            text_color=MECH_MUTED,
+            font=("Segoe UI", 10),
         )
-        hint.pack(anchor="w", pady=(10, 0))
+        hint.pack(anchor="w", padx=12, pady=(10, 12))
 
     def _music_try_init(self):
         if self.music_backend:
@@ -795,19 +1202,57 @@ class MagicHub(tk.Tk):
 
     # --------------------- History tab ---------------------
     def _build_tab_history(self):
-        root = ttk.Frame(self.tab_history, padding=10)
-        root.pack(fill="both", expand=True)
+        root = ctk.CTkFrame(self.tab_history, fg_color=MECH_PANEL, corner_radius=18)
+        root.pack(fill="both", expand=True, padx=12, pady=12)
+        root.grid_rowconfigure(2, weight=1)
+        root.grid_columnconfigure(0, weight=1)
 
-        ttk.Label(root, text="Historial de eventos", style="Header.TLabel").pack(anchor="w")
+        ctk.CTkLabel(
+            root,
+            text="Historial de eventos",
+            text_color=MECH_TEXT,
+            font=("Segoe UI", 13, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=12, pady=(12, 6))
 
-        btns = ttk.Frame(root)
-        btns.pack(fill="x", pady=(10, 6))
-        ttk.Button(btns, text="Recargar", command=self._reload_history_ui).pack(side="left")
-        ttk.Button(btns, text="Guardar partida…", command=self._save_as).pack(side="left", padx=8)
-        ttk.Button(btns, text="Cargar partida…", command=self._load_from).pack(side="left")
+        btns = ctk.CTkFrame(root, fg_color="transparent")
+        btns.grid(row=1, column=0, sticky="w", padx=12, pady=(0, 6))
+        ctk.CTkButton(
+            btns,
+            text="Recargar",
+            command=self._reload_history_ui,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left")
+        ctk.CTkButton(
+            btns,
+            text="Guardar partida…",
+            command=self._save_as,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left", padx=8)
+        ctk.CTkButton(
+            btns,
+            text="Cargar partida…",
+            command=self._load_from,
+            fg_color=MECH_CARD,
+            hover_color=MECH_BTN_HOVER,
+            text_color=MECH_TEXT,
+            corner_radius=12,
+        ).pack(side="left")
 
-        self.history_text = tk.Text(root, wrap="word")
-        self.history_text.pack(fill="both", expand=True)
+        self.history_text = tk.Text(
+            root,
+            wrap="word",
+            bg=MECH_BG,
+            fg=MECH_TEXT,
+            insertbackground=MECH_TEXT,
+            relief="flat",
+        )
+        self.history_text.grid(row=2, column=0, sticky="nsew", padx=12, pady=(0, 12))
         self.history_text.configure(state="disabled")
 
     def _save_as(self):
