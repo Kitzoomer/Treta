@@ -124,6 +124,19 @@ def render_local_response(template: str, cfg: dict) -> str:
     )
     text = re.sub(r"\s+", " ", text).strip()
     return re.sub(r"\s+([.,!?])", r"\1", text)
+def is_time_request(text: str) -> bool:
+    if "hora" not in text:
+        return False
+    patterns = [
+        r"\bque\s+hora\s+es\b",
+        r"\bque\s+hora\s+son\b",
+        r"\bque\s+hora\b",
+        r"\bdime\s+la\s+hora\b",
+        r"\bme\s+dices?\s+la\s+hora\b",
+        r"\bhora\s+actual\b",
+        r"\bla\s+hora\s+actual\b",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def load_config() -> dict:
@@ -619,6 +632,11 @@ class TretaPanel(tk.Tk):
         t_norm = normalize_text(t)
 
         if self._handle_local_intent(t_norm):
+        if is_time_request(t_norm):
+            now = datetime.now().strftime("%H:%M")
+            answer = f"Son las {now}."
+            self._log(f"🕒 Hora local: {now}\n")
+            self.speak(answer)
             return True
 
         for rule in self.cfg.get("voice_commands", []):

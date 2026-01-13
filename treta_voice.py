@@ -501,6 +501,19 @@ def handle_local_intent(text: str, cfg: dict) -> tuple[bool, str, str, str]:
             if matched:
                 return True, render_local_response(response, cfg), name, pattern_norm
     return False, "", "", ""
+def is_time_request(text: str) -> bool:
+    if "hora" not in text:
+        return False
+    patterns = [
+        r"\bque\s+hora\s+es\b",
+        r"\bque\s+hora\s+son\b",
+        r"\bque\s+hora\b",
+        r"\bdime\s+la\s+hora\b",
+        r"\bme\s+dices?\s+la\s+hora\b",
+        r"\bhora\s+actual\b",
+        r"\bla\s+hora\s+actual\b",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def ask_chatgpt(user_query: str) -> str:
@@ -718,6 +731,12 @@ def main():
                     )
                     time.sleep(0.2)
                     speak(response)
+                if is_time_request(q_norm):
+                    now = datetime.now().strftime("%H:%M")
+                    answer = f"Son las {now}."
+                    print("🤖 Treta:", answer)
+                    time.sleep(0.2)
+                    speak(answer)
                     continue
                 speak("Procesando.")
                 answer = ask_chatgpt(q)
