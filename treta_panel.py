@@ -70,6 +70,14 @@ def normalize_text(text: str) -> str:
     )
 
 
+def apply_gain(audio: np.ndarray, gain_db: float) -> np.ndarray:
+    if not audio.size or gain_db == 0:
+        return audio
+    gain = float(10 ** (gain_db / 20))
+    boosted = audio * gain
+    return np.clip(boosted, -1.0, 1.0)
+
+
 def fuzzy_contains(text: str, pattern: str, threshold: float) -> bool:
     text_words = text.split()
     pattern_words = pattern.split()
@@ -83,6 +91,19 @@ def fuzzy_contains(text: str, pattern: str, threshold: float) -> bool:
         if difflib.SequenceMatcher(None, candidate, pattern).ratio() >= threshold:
             return True
     return False
+
+
+def parse_int(value, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def load_local_intents(cfg: dict) -> list[dict]:
@@ -224,6 +245,9 @@ class TretaPanel(tk.Tk):
         self.stop_event = threading.Event()
         self.speaking = threading.Event()
         self.mic_index = pick_input_device(self.cfg)
+        self._last_audio_sr: int | None = None
+        self._resolved_sr: int | None = None
+        self._resolved_ch: int = 1
 
         # Captura de idea
         self._idea_capture_next = False
@@ -308,11 +332,19 @@ class TretaPanel(tk.Tk):
             mic_desc = str(self.mic_index)
             try:
                 mic_dev = sd.query_devices(self.mic_index)
-                mic_desc = f"{self.mic_index} ({mic_dev.get('name', 'desconocido')})"
+                mic_desc = (
+                    f"{self.mic_index} ({mic_dev.get('name', 'desconocido')}, "
+                    f"default_sr={mic_dev.get('default_samplerate', 'n/a')})"
+                )
             except Exception:
                 pass
+        self._resolve_audio_config()
         self._log(f"🎤 Mic: {mic_desc}\n")
-        self._log(f"🎚️ sample_rate: {self.cfg.get('sample_rate', 48000)}\n")
+        self._log(
+            f"🎚️ sample_rate: {self._resolved_sr or 'auto'} | channels: {self._resolved_ch}\n"
+        )
+        self._log(f"🔊 input_gain_db: {self.cfg.get('input_gain_db', 0.0)}\n")
+        self._log(f"🧠 stt_initial_prompt: {self.cfg.get('stt_initial_prompt', '')}\n")
         self._log(
             "🎯 thresholds: "
             f"noise_calib_sec={self.cfg.get('noise_calib_sec', 0.6)}, "
@@ -335,6 +367,24 @@ class TretaPanel(tk.Tk):
 
         for b in self.cfg.get("panel_buttons_right", []):
             ttk.Button(self.right, text=b["label"], command=lambda bb=b: self._button_action(bb)).pack(fill="x", pady=4)
+
+    def _resolve_audio_config(self):
+        sr_cfg = parse_int(self.cfg.get("sample_rate", 48000))
+        ch_cfg = parse_int(self.cfg.get("channels", 1))
+        resolved_sr = sr_cfg
+        resolved_ch = ch_cfg or 1
+        try:
+            if self.mic_index is not None:
+                dev = sd.query_devices(self.mic_index)
+                if resolved_sr is None:
+                    resolved_sr = int(dev.get("default_samplerate", 48000))
+                if ch_cfg is None:
+                    resolved_ch = 1 if dev.get("max_input_channels", 1) >= 1 else 1
+        except Exception:
+            if resolved_sr is None:
+                resolved_sr = 48000
+        self._resolved_sr = resolved_sr or 48000
+        self._resolved_ch = resolved_ch or 1
 
     # ---------- Logging ----------
     def _log(self, s: str):
@@ -632,7 +682,7 @@ class TretaPanel(tk.Tk):
         t_norm = normalize_text(t)
 
         if self._handle_local_intent(t_norm):
-        if is_time_request(t_norm):
+actriz         if is_time_request(t_norm):
             now = datetime.now().strftime("%H:%M")
             answer = f"Son las {now}."
             self._log(f"🕒 Hora local: {now}\n")
@@ -708,12 +758,13 @@ class TretaPanel(tk.Tk):
 
     # ---------- Audio capture ----------
     def _record_until_silence(self):
-        sr = int(self.cfg.get("sample_rate", 48000))
-        ch = int(self.cfg.get("channels", 1))
+        sr = int(self._resolved_sr or 48000)
+        ch = int(self._resolved_ch or 1)
         max_sec = float(self.cfg.get("max_record_sec", 90))
         noise_calib = float(self.cfg.get("noise_calib_sec", 0.6))
         end_silence = float(self.cfg.get("end_silence_sec", 1.2))
         thresh_mult = float(self.cfg.get("thresh_mult", 2.8))
+        gain_db = float(self.cfg.get("input_gain_db", 0.0))
 
         # calibración
         self._set_status("calibrando ruido…")
@@ -775,7 +826,9 @@ class TretaPanel(tk.Tk):
         audio = np.concatenate(chunks, axis=0).astype(np.float32)
         if audio.ndim == 2 and audio.shape[1] > 1:
             audio = audio[:, 0]
-        return audio.squeeze()
+        self._last_audio_sr = sr
+        audio = apply_gain(audio.squeeze(), gain_db)
+        return audio
 
     def _record_fixed(self, seconds: float, sr: int, ch: int):
         frames = int(sr * seconds)
@@ -785,15 +838,19 @@ class TretaPanel(tk.Tk):
             x = data.astype(np.float32)
             if x.ndim == 2 and x.shape[1] > 1:
                 x = x[:, 0]
-            return x.squeeze()
+            return apply_gain(x.squeeze(), float(self.cfg.get("input_gain_db", 0.0)))
         except Exception as e:
             self._log(f"❌ Error grabando audio: {e}\n")
             return None
 
     def _transcribe(self, audio: np.ndarray) -> str:
-        sr_in = int(self.cfg.get("sample_rate", 48000))
+        sr_in = int(self._last_audio_sr or self._resolved_sr or 48000)
         audio_16k = resample_linear(audio, sr_in, 16000)
-        segments, _ = self.whisper.transcribe(audio_16k, language=self.cfg.get("language", "es"), vad_filter=True)
+        prompt = (self.cfg.get("stt_initial_prompt") or "").strip()
+        kwargs = dict(language=self.cfg.get("language", "es"), vad_filter=True)
+        if prompt:
+            kwargs["initial_prompt"] = prompt
+        segments, _ = self.whisper.transcribe(audio_16k, **kwargs)
         return " ".join(seg.text.strip() for seg in segments).strip()
 
     def _ask_chatgpt(self, user_text: str) -> str:

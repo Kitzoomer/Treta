@@ -1,8 +1,9 @@
 ﻿{
     "language":  "es",
     "model":  "small",
-    "sample_rate":  48000,
-    "channels":  1,
+    "sample_rate":  "auto",
+    "channels":  "auto",
+    "input_gain_db":  0.0,
     "mic_device_name_contains":  "fifine",
     "mic_device_index":  null,
     "max_record_sec":  20,
@@ -11,6 +12,7 @@
     "thresh_mult":  2.6,
     "system_prompt":  "Eres Treta la Torreta: tecnica, clara, curiosa y creativa. Responde en espaÃƒÆ’Ã‚Â±ol, directo y ÃƒÆ’Ã‚Âºtil.",
     "wake_word":  "treta",
+    "stt_initial_prompt":  "Treta,",
     "time_zone":  "local",
     "fuzzy_match_threshold":  0.84,
     "local_intents":  [

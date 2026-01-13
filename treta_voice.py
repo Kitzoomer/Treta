@@ -49,7 +49,6 @@ LANGUAGE = "es"
 WAKE_WORDS = ["treta"]
 
 MIC_NAME_CONTAINS = (_config.get("mic_device_name_contains") or "").strip()
-CHANNELS = 1
 MAX_RECORD_SEC = float(_config.get("max_record_sec", 20))
 END_SILENCE_SEC = float(_config.get("end_silence_sec", 1.8))
 
@@ -293,6 +292,7 @@ def record_utterance(
     device: int,
     channels: int,
     vad,
+    preferred_sr: int | None = None,
 ) -> tuple[np.ndarray, list[dict], bool]:
     """
     Graba hasta detectar fin de frase usando VAD y hangover.
@@ -301,15 +301,18 @@ def record_utterance(
     # Limpia cola por si quedó basura
     _drain_queue(audio_q)
 
-    candidates = [
-        (None, channels),
-        (48000, channels),
-        (16000, channels),
-        # por si el dispositivo realmente es estéreo obligatorio:
-        (None, 2),
-        (48000, 2),
-        (16000, 2),
-    ]
+    candidates = []
+    if preferred_sr is not None:
+        candidates.append((preferred_sr, channels))
+    candidates.extend(
+        [
+            (None, channels),
+            (48000, channels),
+            (16000, channels),
+        ]
+    )
+    # por si el dispositivo realmente es estéreo obligatorio:
+    candidates.extend([(None, 2), (48000, 2), (16000, 2)])
 
     last_err = None
     dev_info = sd.query_devices(device)
@@ -382,7 +385,7 @@ def record_utterance(
     )
 
 
-def transcribe(audio_16k: np.ndarray) -> str:
+def transcribe(audio_16k: np.ndarray, gain_db: float = 0.0, prompt: str | None = None) -> str:
     global whisper
     if whisper is None:
         try:
@@ -391,7 +394,11 @@ def transcribe(audio_16k: np.ndarray) -> str:
             print("⚠️ faster_whisper no está instalado. Instálalo para habilitar la transcripción.")
             return ""
         whisper = WhisperModel("small", device="cpu", compute_type="int8")
-    segments, _ = whisper.transcribe(audio_16k, language=LANGUAGE, vad_filter=True)
+    audio_16k = apply_gain(audio_16k, gain_db)
+    kwargs = dict(language=LANGUAGE, vad_filter=True)
+    if prompt:
+        kwargs["initial_prompt"] = prompt
+    segments, _ = whisper.transcribe(audio_16k, **kwargs)
     return " ".join(seg.text.strip() for seg in segments).strip()
 
 
@@ -412,6 +419,14 @@ def normalize_text(text: str) -> str:
     )
 
 
+def apply_gain(audio: np.ndarray, gain_db: float) -> np.ndarray:
+    if not audio.size or gain_db == 0:
+        return audio
+    gain = float(10 ** (gain_db / 20))
+    boosted = audio * gain
+    return np.clip(boosted, -1.0, 1.0)
+
+
 def fuzzy_contains(text: str, pattern: str, threshold: float) -> bool:
     text_words = text.split()
     pattern_words = pattern.split()
@@ -425,6 +440,19 @@ def fuzzy_contains(text: str, pattern: str, threshold: float) -> bool:
         if difflib.SequenceMatcher(None, candidate, pattern).ratio() >= threshold:
             return True
     return False
+
+
+def parse_int(value, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def load_local_intents(cfg: dict) -> list[dict]:
@@ -561,6 +589,9 @@ def main():
     args = parse_args()
     logger.info("Treta Voice iniciando.")
     logger.info("sample_rate: %s", cfg.get("sample_rate", "unknown"))
+    logger.info("channels: %s", cfg.get("channels", "unknown"))
+    logger.info("input_gain_db: %s", cfg.get("input_gain_db", 0.0))
+    logger.info("stt_initial_prompt: %s", cfg.get("stt_initial_prompt", ""))
     logger.info("mic_device_index: %s", cfg.get("mic_device_index", "unknown"))
     logger.info("mic_device_name_contains: %s", cfg.get("mic_device_name_contains", "unknown"))
     logger.info(
@@ -605,6 +636,11 @@ def main():
         return
 
     vad = webrtcvad.Vad(2)
+    channels = parse_int(cfg.get("channels", 1)) or 1
+    preferred_sr = parse_int(cfg.get("sample_rate", None))
+    input_gain_db = float(cfg.get("input_gain_db", 0.0))
+    stt_prompt = (cfg.get("stt_initial_prompt") or "").strip() or None
+
     if args.mic is not None:
         mic_device = args.mic
     else:
@@ -628,7 +664,10 @@ def main():
     # Info del micro
     try:
         dev = sd.query_devices(mic_device)
-        print(f"🎤 Usando micro {mic_device}: {dev['name']} (inputs={dev['max_input_channels']})")
+        print(
+            f"🎤 Usando micro {mic_device}: {dev['name']} "
+            f"(inputs={dev['max_input_channels']}, default_sr={dev.get('default_samplerate', 'n/a')})"
+        )
     except Exception as e:
         print(f"⚠️ No pude consultar el micro {mic_device}: {e}")
         fallback_device = default_input_device()
@@ -665,8 +704,9 @@ def main():
                     MAX_RECORD_SEC,
                     END_SILENCE_SEC,
                     mic_device,
-                    CHANNELS,
+                    channels,
                     vad,
+                    preferred_sr,
                 )
             except sd.PortAudioError as e:
                 fallback_device = default_input_device()
@@ -682,8 +722,9 @@ def main():
                         MAX_RECORD_SEC,
                         END_SILENCE_SEC,
                         fallback_device,
-                        CHANNELS,
+                        channels,
                         vad,
+                        preferred_sr,
                     )
                     mic_device = fallback_device
                 except sd.PortAudioError as err:
@@ -698,7 +739,7 @@ def main():
                 continue
 
             stt_t0 = time.perf_counter()
-            text = transcribe(audio_16k)
+            text = transcribe(audio_16k, gain_db=input_gain_db, prompt=stt_prompt)
             _log_timing("STT", time.perf_counter() - stt_t0)
             if not text:
                 empty_streak += 1
