@@ -106,6 +106,15 @@ def parse_int(value, default: int | None = None) -> int | None:
         return default
 
 
+def parse_float(value, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 def load_local_intents(cfg: dict) -> list[dict]:
     intents = cfg.get("local_intents", [])
     return intents if isinstance(intents, list) else []
@@ -345,6 +354,8 @@ class TretaPanel(tk.Tk):
         )
         self._log(f"🔊 input_gain_db: {self.cfg.get('input_gain_db', 0.0)}\n")
         self._log(f"🧠 stt_initial_prompt: {self.cfg.get('stt_initial_prompt', '')}\n")
+        self._log(f"📈 min_input_rms: {self.cfg.get('min_input_rms', 0.0)}\n")
+        self._log(f"📈 max_input_rms: {self.cfg.get('max_input_rms', 1.0)}\n")
         self._log(
             "🎯 thresholds: "
             f"noise_calib_sec={self.cfg.get('noise_calib_sec', 0.6)}, "
@@ -622,11 +633,21 @@ class TretaPanel(tk.Tk):
                 self._log_timing("VAD", self._last_vad_seconds)
             self.after(0, lambda: self.meter.configure(value=0))
 
-            sr = int(self.cfg.get("sample_rate", 48000))
+            sr = int(self._last_audio_sr or self._resolved_sr or 48000)
             self._write_debug_wav(audio, sr)
             if audio is None or len(audio) < int(sr * 0.3):
                 self._finish_listen()
                 return
+            level = rms(audio)
+            min_rms = parse_float(self.cfg.get("min_input_rms", 0.0), 0.0) or 0.0
+            max_rms = parse_float(self.cfg.get("max_input_rms", 1.0), 1.0) or 1.0
+            if level < min_rms:
+                self._log("⚠️ Audio muy bajo. Revisa el micro o sube input_gain_db.\n")
+                self.speak("No te oigo bien. Sube el volumen del micro o acércate.")
+                self._finish_listen()
+                return
+            if level > max_rms:
+                self._log("⚠️ Audio saturado. Baja el volumen del micro.\n")
 
             self._set_status("transcribiendo…")
             stt_t0 = time.perf_counter()

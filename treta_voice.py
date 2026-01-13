@@ -455,6 +455,15 @@ def parse_int(value, default: int | None = None) -> int | None:
         return default
 
 
+def parse_float(value, default: float | None = None) -> float | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 def load_local_intents(cfg: dict) -> list[dict]:
     intents = cfg.get("local_intents", [])
     return intents if isinstance(intents, list) else []
@@ -592,6 +601,8 @@ def main():
     logger.info("channels: %s", cfg.get("channels", "unknown"))
     logger.info("input_gain_db: %s", cfg.get("input_gain_db", 0.0))
     logger.info("stt_initial_prompt: %s", cfg.get("stt_initial_prompt", ""))
+    logger.info("min_input_rms: %s", cfg.get("min_input_rms", 0.0))
+    logger.info("max_input_rms: %s", cfg.get("max_input_rms", 1.0))
     logger.info("mic_device_index: %s", cfg.get("mic_device_index", "unknown"))
     logger.info("mic_device_name_contains: %s", cfg.get("mic_device_name_contains", "unknown"))
     logger.info(
@@ -639,6 +650,8 @@ def main():
     channels = parse_int(cfg.get("channels", 1)) or 1
     preferred_sr = parse_int(cfg.get("sample_rate", None))
     input_gain_db = float(cfg.get("input_gain_db", 0.0))
+    min_rms = parse_float(cfg.get("min_input_rms", 0.0), 0.0) or 0.0
+    max_rms = parse_float(cfg.get("max_input_rms", 1.0), 1.0) or 1.0
     stt_prompt = (cfg.get("stt_initial_prompt") or "").strip() or None
 
     if args.mic is not None:
@@ -737,6 +750,13 @@ def main():
                 save_debug_segments(segments, DATA_DIR / "debug_last_segments.json")
             if not speech_detected or audio_16k.size == 0:
                 continue
+            level = float(np.sqrt(np.mean(audio_16k * audio_16k) + 1e-12))
+            if level < min_rms:
+                print("⚠️ Audio muy bajo. Revisa el micro o sube input_gain_db.")
+                speak("No te oigo bien. Sube el volumen del micro o acércate.")
+                continue
+            if level > max_rms:
+                print("⚠️ Audio saturado. Baja el volumen del micro.")
 
             stt_t0 = time.perf_counter()
             text = transcribe(audio_16k, gain_db=input_gain_db, prompt=stt_prompt)
