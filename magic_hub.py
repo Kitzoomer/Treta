@@ -491,8 +491,8 @@ class MagicHub(ctk.CTk):
 
     def _sync_ui_from_game(self):
         t = self.game["turn"]
-        self.turn_label.config(text=f"Turno {t['number']} · Activo: Jugador {t['active_player']+1}")
-        self.phase_label.config(text=f"Fase: {self._phase_name(t['phase_index'])}")
+        self.turn_label.configure(text=f"Turno {t['number']} · Activo: Jugador {t['active_player']+1}")
+        self.phase_label.configure(text=f"Fase: {self._phase_name(t['phase_index'])}")
 
         for w in self.players_frame.winfo_children():
             w.destroy()
@@ -1112,7 +1112,7 @@ class MagicHub(ctk.CTk):
 
         ok = self._music_try_init()
         if not ok:
-            self.music_status.config(text="Backend: NO disponible. Instala pygame (pip install pygame).")
+            self.music_status.configure(text="Backend: NO disponible. Instala pygame (pip install pygame).")
             return
 
         exts = (".mp3", ".ogg", ".wav")
@@ -1124,7 +1124,7 @@ class MagicHub(ctk.CTk):
         for f in files:
             self.music_list.insert("end", os.path.basename(f))
 
-        self.music_status.config(text=f"Backend: pygame · {len(files)} pistas cargadas")
+        self.music_status.configure(text=f"Backend: pygame · {len(files)} pistas cargadas")
         self._log_event("music_load", {"folder": folder, "count": len(files)})
 
     def _music_play_index(self, idx: int):
@@ -1139,33 +1139,33 @@ class MagicHub(ctk.CTk):
             pygame.mixer.music.play()
             self.music_playing = True
             self._music_apply_volume()
-            self.music_status.config(text=f"Reproduciendo: {os.path.basename(path)}")
+            self.music_status.configure(text=f"Reproduciendo: {os.path.basename(path)}")
             self.music_list.selection_clear(0, "end")
             self.music_list.selection_set(idx)
             self.music_list.see(idx)
             self._log_event("music_play", {"track": path})
         except Exception as e:
-            self.music_status.config(text=f"Error música: {e}")
+            self.music_status.configure(text=f"Error música: {e}")
 
     def _music_toggle(self):
         if not self._music_try_init():
-            self.music_status.config(text="Backend: NO disponible. Instala pygame (pip install pygame).")
+            self.music_status.configure(text="Backend: NO disponible. Instala pygame (pip install pygame).")
             return
         if not self.music_playlist:
-            self.music_status.config(text="Carga una carpeta con música primero.")
+            self.music_status.configure(text="Carga una carpeta con música primero.")
             return
         try:
             import pygame
             if self.music_playing:
                 pygame.mixer.music.pause()
                 self.music_playing = False
-                self.music_status.config(text="Pausado")
+                self.music_status.configure(text="Pausado")
                 self._log_event("music_pause", {})
             else:
                 if pygame.mixer.music.get_busy():
                     pygame.mixer.music.unpause()
                     self.music_playing = True
-                    self.music_status.config(text="Reanudado")
+                    self.music_status.configure(text="Reanudado")
                     self._log_event("music_unpause", {})
                 else:
                     self._music_play_index(self.music_current_idx)
