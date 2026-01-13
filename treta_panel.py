@@ -1,5 +1,8 @@
 import os, json, time, threading, queue, subprocess
 import argparse
+import difflib
+import re
+import unicodedata
 import wave
 from datetime import datetime, timedelta
 import tkinter as tk
@@ -26,6 +29,7 @@ PENDING_CONFIRM_PATH = os.path.join(BRIDGE_DIR, "pending_confirm.json")
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
 IDEAS_PATH = os.path.join(DATA_DIR, "ideas.jsonl")
 DIARY_PATH = os.path.join(DATA_DIR, "diary.jsonl")
+INTENTS_PATH = os.path.join(DATA_DIR, "intents.jsonl")
 
 
 def _ensure_dirs():
@@ -59,12 +63,34 @@ def append_jsonl(path: str, obj):
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
 
+def normalize_text(text: str) -> str:
+    lowered = text.lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", lowered) if unicodedata.category(c) != "Mn"
+    )
+
+
 def apply_gain(audio: np.ndarray, gain_db: float) -> np.ndarray:
     if not audio.size or gain_db == 0:
         return audio
     gain = float(10 ** (gain_db / 20))
     boosted = audio * gain
     return np.clip(boosted, -1.0, 1.0)
+
+
+def fuzzy_contains(text: str, pattern: str, threshold: float) -> bool:
+    text_words = text.split()
+    pattern_words = pattern.split()
+    if not text_words or not pattern_words:
+        return False
+    if len(text_words) < len(pattern_words):
+        candidate = " ".join(text_words)
+        return difflib.SequenceMatcher(None, candidate, pattern).ratio() >= threshold
+    for idx in range(len(text_words) - len(pattern_words) + 1):
+        candidate = " ".join(text_words[idx : idx + len(pattern_words)])
+        if difflib.SequenceMatcher(None, candidate, pattern).ratio() >= threshold:
+            return True
+    return False
 
 
 def parse_int(value, default: int | None = None) -> int | None:
@@ -89,6 +115,58 @@ def parse_float(value, default: float | None = None) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return default
+def load_local_intents(cfg: dict) -> list[dict]:
+    intents = cfg.get("local_intents", [])
+    return intents if isinstance(intents, list) else []
+
+
+def resolve_timezone(cfg: dict) -> tuple[datetime, str]:
+    tz_name = (cfg.get("time_zone") or "local").strip()
+    if not tz_name or tz_name.lower() == "local":
+        return datetime.now(), ""
+    try:
+        from zoneinfo import ZoneInfo
+    except Exception:
+        return datetime.now(), ""
+    try:
+        return datetime.now(tz=ZoneInfo(tz_name)), f"({tz_name})"
+    except Exception:
+        return datetime.now(), ""
+
+
+def render_local_response(template: str, cfg: dict) -> str:
+    now, tz_label = resolve_timezone(cfg)
+    weekday_map = {
+        "monday": "lunes",
+        "tuesday": "martes",
+        "wednesday": "miércoles",
+        "thursday": "jueves",
+        "friday": "viernes",
+        "saturday": "sábado",
+        "sunday": "domingo",
+    }
+    weekday_es = weekday_map.get(now.strftime("%A").lower(), now.strftime("%A"))
+    text = (
+        template.replace("{time}", now.strftime("%H:%M"))
+        .replace("{date}", now.strftime("%d/%m/%Y"))
+        .replace("{weekday}", weekday_es)
+        .replace("{timezone}", tz_label)
+    )
+    text = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+([.,!?])", r"\1", text)
+def is_time_request(text: str) -> bool:
+    if "hora" not in text:
+        return False
+    patterns = [
+        r"\bque\s+hora\s+es\b",
+        r"\bque\s+hora\s+son\b",
+        r"\bque\s+hora\b",
+        r"\bdime\s+la\s+hora\b",
+        r"\bme\s+dices?\s+la\s+hora\b",
+        r"\bhora\s+actual\b",
+        r"\bla\s+hora\s+actual\b",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def load_config() -> dict:
@@ -622,6 +700,15 @@ class TretaPanel(tk.Tk):
         wake = (self.cfg.get("wake_word") or "").lower().strip()
         if wake and wake in t:
             t = t.replace(wake, "").strip(" ,.:;!?¡¿")
+        t_norm = normalize_text(t)
+
+        if self._handle_local_intent(t_norm):
+actriz         if is_time_request(t_norm):
+            now = datetime.now().strftime("%H:%M")
+            answer = f"Son las {now}."
+            self._log(f"🕒 Hora local: {now}\n")
+            self.speak(answer)
+            return True
 
         for rule in self.cfg.get("voice_commands", []):
             m = (rule.get("match") or "").lower()
@@ -646,6 +733,48 @@ class TretaPanel(tk.Tk):
                     self._run_action_id(action, allow_confirm=False)
                     return True
 
+        return False
+
+    def _log_intent(self, payload: dict):
+        payload = {"ts": now_iso(), **payload}
+        append_jsonl(INTENTS_PATH, payload)
+
+    def _handle_local_intent(self, text: str) -> bool:
+        intents = load_local_intents(self.cfg)
+        threshold = float(self.cfg.get("fuzzy_match_threshold", 0.84))
+        for intent in intents:
+            name = str(intent.get("name") or "unknown")
+            patterns = intent.get("patterns", [])
+            response = str(intent.get("response") or "")
+            if not response or not isinstance(patterns, list):
+                continue
+            for pattern in patterns:
+                pattern_norm = normalize_text(str(pattern))
+                matched = False
+                if not pattern_norm:
+                    continue
+                if pattern_norm.startswith("re:"):
+                    expr = pattern_norm[3:]
+                    if re.search(expr, text):
+                        matched = True
+                elif pattern_norm in text:
+                    matched = True
+                elif fuzzy_contains(text, pattern_norm, threshold):
+                    matched = True
+                if matched:
+                    answer = render_local_response(response, self.cfg)
+                    self._log(f"🎯 Intento local: {name} (patrón: {pattern_norm})\n")
+                    self._log_intent(
+                        {
+                            "source": "panel",
+                            "intent": name,
+                            "pattern": pattern_norm,
+                            "text": text,
+                            "response": answer,
+                        }
+                    )
+                    self.speak(answer)
+                    return True
         return False
 
     # ---------- Audio capture ----------
