@@ -16,6 +16,21 @@ from tkinter import messagebox
 from openai import OpenAI
 
 from modes.registry import ModePosition, get_modes, modes_for_position
+from ui_theme import (
+    MECH_BG,
+    MECH_BORDER,
+    MECH_BTN_HOVER,
+    MECH_CARD,
+    MECH_CARD_2,
+    MECH_DANGER,
+    MECH_MUTED,
+    MECH_OK,
+    MECH_PANEL,
+    MECH_RED,
+    MECH_RED_DARK,
+    MECH_TEXT,
+    apply_treta_theme,
+)
 
 # ===========================
 # CONFIG
@@ -29,22 +44,6 @@ def load_config() -> dict:
     with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
-
-# ===========================
-# THEME: Adeptus Mechanicus
-# ===========================
-MECH_BG        = "#0b0f12"   # fondo ventana
-MECH_PANEL     = "#0f151a"   # paneles laterales y base
-MECH_CARD      = "#121b21"   # tarjetas
-MECH_CARD_2    = "#10181e"   # segunda capa
-MECH_BORDER    = "#2b3842"   # borde suave
-MECH_TEXT      = "#d6dde3"   # texto principal
-MECH_MUTED     = "#93a4b1"   # texto secundario
-MECH_RED       = "#c1121f"   # acento mechanicus
-MECH_RED_DARK  = "#7a0c12"   # hover/active rojo
-MECH_BTN_HOVER = "#1b2831"   # hover neutro
-MECH_DANGER    = "#2a3137"   # botón desactivado
-MECH_OK        = "#2fd27d"
 
 
 def _rms(x: np.ndarray) -> float:
@@ -124,14 +123,7 @@ class TretaApp(ctk.CTk):
         super().__init__()
 
         # Base CTk
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("dark-blue")
-
-        # 2560x1440 + pen Huion
-        try:
-            ctk.set_widget_scaling(1.15)
-        except Exception:
-            pass
+        apply_treta_theme()
 
         self.cfg = load_config()
         self.base_dir = BASE_DIR

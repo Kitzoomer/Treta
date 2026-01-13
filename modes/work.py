@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from tkinter import messagebox
+from modes.ui_helpers import open_mode_window
 
 
 def open_work_mode(app: "TretaApp") -> None:
     app._log("▶ Ejecutado: mode_work\n")
-    messagebox.showinfo(
+    open_mode_window(
+        app,
         "Modo Trabajo",
-        "Modo Trabajo está en preparación.\n\n"
-        "Aquí irá el Pomodoro, foco y reproductor lofi.",
+        "Modo Trabajo está en preparación.\n\nAquí irá el Pomodoro, foco y reproductor lofi.",
     )
