@@ -5,10 +5,13 @@ import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 import wave
+from datetime import datetime
 from pathlib import Path
+import unicodedata
 
 import numpy as np
 import sounddevice as sd
@@ -401,6 +404,28 @@ def extract_query(text: str):
     return None
 
 
+def normalize_text(text: str) -> str:
+    lowered = text.lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", lowered) if unicodedata.category(c) != "Mn"
+    )
+
+
+def is_time_request(text: str) -> bool:
+    if "hora" not in text:
+        return False
+    patterns = [
+        r"\bque\s+hora\s+es\b",
+        r"\bque\s+hora\s+son\b",
+        r"\bque\s+hora\b",
+        r"\bdime\s+la\s+hora\b",
+        r"\bme\s+dices?\s+la\s+hora\b",
+        r"\bhora\s+actual\b",
+        r"\bla\s+hora\s+actual\b",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
 def ask_chatgpt(user_query: str) -> str:
     global client
     if not os.environ.get("OPENAI_API_KEY"):
@@ -595,6 +620,14 @@ def main():
                 continue
 
             if q:
+                q_norm = normalize_text(q)
+                if is_time_request(q_norm):
+                    now = datetime.now().strftime("%H:%M")
+                    answer = f"Son las {now}."
+                    print("🤖 Treta:", answer)
+                    time.sleep(0.2)
+                    speak(answer)
+                    continue
                 speak("Procesando.")
                 answer = ask_chatgpt(q)
                 print("🤖 Treta:", answer)
