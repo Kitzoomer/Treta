@@ -1,4 +1,6 @@
 import os, json, time, threading, queue, subprocess
+import argparse
+import wave
 from datetime import datetime, timedelta
 import tkinter as tk
 from tkinter import ttk, scrolledtext, messagebox
@@ -16,8 +18,9 @@ CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 BRIDGE_DIR = os.path.join(BASE_DIR, "bridge")
 DATA_DIR = os.path.join(BASE_DIR, "data")
 ACTIONS_DIR = os.path.join(BASE_DIR, "actions")
+LOG_DIR = os.path.join(BASE_DIR, "logs")
 
-LOG_PATH = os.path.join(BRIDGE_DIR, "log.txt")
+LOG_PATH = os.path.join(LOG_DIR, "treta.log")
 PENDING_CONFIRM_PATH = os.path.join(BRIDGE_DIR, "pending_confirm.json")
 
 STATE_PATH = os.path.join(DATA_DIR, "state.json")
@@ -29,6 +32,7 @@ def _ensure_dirs():
     os.makedirs(BRIDGE_DIR, exist_ok=True)
     os.makedirs(DATA_DIR, exist_ok=True)
     os.makedirs(ACTIONS_DIR, exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
 
 def now_iso():
@@ -99,11 +103,13 @@ def pick_input_device(cfg: dict) -> int | None:
 
 
 class TretaPanel(tk.Tk):
-    def __init__(self):
+    def __init__(self, debug: bool = False):
         super().__init__()
         _ensure_dirs()
 
         self.cfg = load_config()
+        self.debug = debug
+        self._last_vad_seconds: float | None = None
 
         self.title("TRETA — Panel de Control")
         self.geometry("1100x650")
@@ -217,7 +223,25 @@ class TretaPanel(tk.Tk):
         self._log("Treta Panel listo.\n")
         if not self.client:
             self._log("⚠ Falta OPENAI_API_KEY (solo afecta a respuestas IA). La voz y acciones pueden funcionar igual.\n")
-        self._log(f"🎤 Mic: {self.mic_index if self.mic_index is not None else 'default del sistema'}\n\n")
+        mic_desc = "default del sistema"
+        if self.mic_index is not None:
+            mic_desc = str(self.mic_index)
+            try:
+                mic_dev = sd.query_devices(self.mic_index)
+                mic_desc = f"{self.mic_index} ({mic_dev.get('name', 'desconocido')})"
+            except Exception:
+                pass
+        self._log(f"🎤 Mic: {mic_desc}\n")
+        self._log(f"🎚️ sample_rate: {self.cfg.get('sample_rate', 48000)}\n")
+        self._log(
+            "🎯 thresholds: "
+            f"noise_calib_sec={self.cfg.get('noise_calib_sec', 0.6)}, "
+            f"end_silence_sec={self.cfg.get('end_silence_sec', 1.2)}, "
+            f"thresh_mult={self.cfg.get('thresh_mult', 2.8)}\n"
+        )
+        if self.debug:
+            self._log("🐛 Debug mode activo (logs/treta.log, data/debug_last.wav).\n")
+        self._log("\n")
 
     def _build_side_buttons(self):
         # limpia
@@ -245,6 +269,26 @@ class TretaPanel(tk.Tk):
     def _set_status(self, s: str):
         self.status.config(text=f"Estado: {s}")
 
+    def _log_timing(self, stage: str, seconds: float):
+        self._log(f"⏱️ {stage}: {seconds:.2f}s\n")
+
+    def _write_debug_wav(self, audio: np.ndarray, sr: int):
+        if not self.debug:
+            return
+        if audio is None or audio.size == 0:
+            return
+        path = os.path.join(DATA_DIR, "debug_last.wav")
+        a = np.clip(audio.astype(np.float32), -1.0, 1.0)
+        pcm16 = (a * 32767.0).astype(np.int16)
+        try:
+            with wave.open(path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sr)
+                wf.writeframes(pcm16.tobytes())
+        except Exception as e:
+            self._log(f"⚠ No pude guardar debug_last.wav: {e}\n")
+
     # ---------- TTS ----------
     def _tts_worker(self):
         engine = pyttsx3.init(driverName="sapi5")
@@ -256,8 +300,10 @@ class TretaPanel(tk.Tk):
                 break
             try:
                 self.speaking.set()
+                t0 = time.perf_counter()
                 engine.say(msg)
                 engine.runAndWait()
+                self._log_timing("TTS", time.perf_counter() - t0)
             except Exception:
                 pass
             finally:
@@ -439,16 +485,23 @@ class TretaPanel(tk.Tk):
 
     def _listen_flow(self):
         try:
+            capture_t0 = time.perf_counter()
             audio = self._record_until_silence()
+            self._log_timing("capture", time.perf_counter() - capture_t0)
+            if self._last_vad_seconds is not None:
+                self._log_timing("VAD", self._last_vad_seconds)
             self.after(0, lambda: self.meter.configure(value=0))
 
             sr = int(self.cfg.get("sample_rate", 48000))
+            self._write_debug_wav(audio, sr)
             if audio is None or len(audio) < int(sr * 0.3):
                 self._finish_listen()
                 return
 
             self._set_status("transcribiendo…")
+            stt_t0 = time.perf_counter()
             text = self._transcribe(audio)
+            self._log_timing("STT", time.perf_counter() - stt_t0)
             if not text:
                 self._log("📝 Oído: (nada claro)\n\n")
                 self._finish_listen()
@@ -554,6 +607,7 @@ class TretaPanel(tk.Tk):
             device=self.mic_index,
             callback=callback,
         ):
+            vad_t0 = time.perf_counter()
             last_meter = 0.0
             while True:
                 if self.stop_event.is_set():
@@ -582,6 +636,7 @@ class TretaPanel(tk.Tk):
 
                     if silence_run >= end_silence and (time.time() - t0) > 0.8:
                         break
+            self._last_vad_seconds = time.perf_counter() - vad_t0
 
         if not chunks:
             return None
@@ -630,4 +685,7 @@ class TretaPanel(tk.Tk):
 
 
 if __name__ == "__main__":
-    TretaPanel().mainloop()
+    parser = argparse.ArgumentParser(description="Treta Panel")
+    parser.add_argument("--debug", action="store_true", help="Guarda debug_last.wav y logs detallados.")
+    args = parser.parse_args()
+    TretaPanel(debug=args.debug).mainloop()
