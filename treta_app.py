@@ -1,12 +1,10 @@
 import os
-import sys
 import json
 import time
 import wave
 import queue
 import threading
 import tempfile
-import subprocess
 
 import numpy as np
 import sounddevice as sd
@@ -17,6 +15,7 @@ from tkinter import messagebox
 
 from openai import OpenAI
 
+from modes.registry import ModePosition, get_modes, modes_for_position
 
 # ===========================
 # CONFIG
@@ -135,6 +134,7 @@ class TretaApp(ctk.CTk):
             pass
 
         self.cfg = load_config()
+        self.base_dir = BASE_DIR
 
         self.title("TRETA — Panel de Control")
         self.geometry("1500x860")
@@ -185,6 +185,9 @@ class TretaApp(ctk.CTk):
         self.tts_q: "queue.Queue[str | None]" = queue.Queue()
         self.tts_thread = threading.Thread(target=self._tts_worker, daemon=True)
         self.tts_thread.start()
+
+        # Modes
+        self.modes = list(get_modes())
 
         # UI
         self._build_left()
@@ -263,14 +266,18 @@ class TretaApp(ctk.CTk):
             font=("Segoe UI", 20, "bold")
         ).grid(row=0, column=0, sticky="w", padx=16, pady=(16, 10))
 
-        self.btn_work = self._big_btn(self.left, "Modo Trabajo", self._mode_work)
-        self.btn_work.grid(row=1, column=0, sticky="ew", padx=16, pady=(10, 12))
+        row = 1
+        for mode in modes_for_position(self.modes, ModePosition.LEFT):
+            btn = self._big_btn(self.left, mode.title, lambda m=mode: self._run_mode(m))
+            btn.grid(row=row, column=0, sticky="ew", padx=16, pady=(10, 12))
+            row += 1
 
         self.btn_idea = self._big_btn(self.left, "Apuntar idea", self._idea_prompt)
-        self.btn_idea.grid(row=2, column=0, sticky="ew", padx=16, pady=12)
+        self.btn_idea.grid(row=row, column=0, sticky="ew", padx=16, pady=12)
+        row += 1
 
         self.btn_sleep = self._big_btn(self.left, "Reposo", self._presence_sleep)
-        self.btn_sleep.grid(row=3, column=0, sticky="ew", padx=16, pady=12)
+        self.btn_sleep.grid(row=row, column=0, sticky="ew", padx=16, pady=12)
 
         self.left.grid_rowconfigure(99, weight=1)
 
@@ -362,14 +369,15 @@ class TretaApp(ctk.CTk):
             font=("Segoe UI", 20, "bold")
         ).grid(row=0, column=0, sticky="e", padx=16, pady=(16, 10))
 
-        self.btn_magic = self._big_btn(self.right, "Modo Magic", self._mode_magic)
-        self.btn_magic.grid(row=1, column=0, sticky="ew", padx=16, pady=(10, 12))
-
-        self.btn_chaos = self._big_btn(self.right, "Modo Caos", self._mode_chaos)
-        self.btn_chaos.grid(row=2, column=0, sticky="ew", padx=16, pady=12)
+        row = 1
+        for mode in modes_for_position(self.modes, ModePosition.RIGHT):
+            btn = self._big_btn(self.right, mode.title, lambda m=mode: self._run_mode(m))
+            btn.grid(row=row, column=0, sticky="ew", padx=16, pady=(10, 12))
+            row += 1
 
         self.btn_presence = self._big_btn(self.right, "Presencia ON", self._presence_on)
-        self.btn_presence.grid(row=3, column=0, sticky="ew", padx=16, pady=12)
+        self.btn_presence.grid(row=row, column=0, sticky="ew", padx=16, pady=12)
+        row += 1
 
         self.btn_shutdown = self._big_btn(
             self.right,
@@ -378,15 +386,18 @@ class TretaApp(ctk.CTk):
             fg=MECH_DANGER,
             hover="#3a3f44"
         )
-        self.btn_shutdown.grid(row=4, column=0, sticky="ew", padx=16, pady=(12, 18))
+        self.btn_shutdown.grid(row=row, column=0, sticky="ew", padx=16, pady=(12, 18))
 
         self.right.grid_rowconfigure(99, weight=1)
 
     # --------------------------
-    # Actions (placeholder)
+    # Actions
     # --------------------------
-    def _mode_work(self):
-        self._log("▶ Ejecutado: mode_work\n")
+    def _run_mode(self, mode):
+        try:
+            mode.handler(self)
+        except Exception as exc:
+            messagebox.showerror("Modo", f"No pude abrir {mode.title}.\n\nDetalle: {exc}")
 
     def _idea_prompt(self):
         self._log("▶ Ejecutado: idea_prompt\n")
@@ -394,45 +405,11 @@ class TretaApp(ctk.CTk):
     def _presence_sleep(self):
         self._log("▶ Ejecutado: presence_sleep\n")
 
-    def _mode_chaos(self):
-        self._log("▶ Ejecutado: mode_chaos\n")
-
     def _presence_on(self):
         self._log("▶ Ejecutado: presence_start\n")
 
     def _shutdown_placeholder(self):
         messagebox.showinfo("Apagar PC", "Shutdown sigue DESACTIVADO por seguridad.")
-
-    # --------------------------
-    # MODO MAGIC (abre hub)
-    # --------------------------
-    def _mode_magic(self):
-        self._log("▶ Ejecutado: mode_magic\n")
-
-        magic_path = os.path.join(BASE_DIR, "magic_hub.py")
-        if not os.path.exists(magic_path):
-            messagebox.showerror("Modo Magic", f"No encuentro magic_hub.py en:\n{magic_path}")
-            return
-
-        # Evitar duplicado
-        try:
-            if self.magic_proc is not None and self.magic_proc.poll() is None:
-                messagebox.showinfo("Modo Magic", "Modo Magic ya está abierto.")
-                return
-        except Exception:
-            pass
-
-        try:
-            self._set_status("abriendo Modo Magic…")
-            self.magic_proc = subprocess.Popen(
-                [sys.executable, magic_path],
-                cwd=os.path.dirname(magic_path),
-            )
-            self._log("🪄 Modo Magic abierto.\n")
-        except Exception as e:
-            messagebox.showerror("Modo Magic", f"No pude abrir Modo Magic.\n\nDetalle: {e}")
-        finally:
-            self._set_status("en espera")
 
     # --------------------------
     # TTS (con auto-recovery)
