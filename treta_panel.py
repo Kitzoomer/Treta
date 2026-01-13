@@ -1,5 +1,7 @@
 import os, json, time, threading, queue, subprocess
 import argparse
+import re
+import unicodedata
 import wave
 from datetime import datetime, timedelta
 import tkinter as tk
@@ -57,6 +59,28 @@ def write_json(path: str, obj):
 def append_jsonl(path: str, obj):
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def normalize_text(text: str) -> str:
+    lowered = text.lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", lowered) if unicodedata.category(c) != "Mn"
+    )
+
+
+def is_time_request(text: str) -> bool:
+    if "hora" not in text:
+        return False
+    patterns = [
+        r"\bque\s+hora\s+es\b",
+        r"\bque\s+hora\s+son\b",
+        r"\bque\s+hora\b",
+        r"\bdime\s+la\s+hora\b",
+        r"\bme\s+dices?\s+la\s+hora\b",
+        r"\bhora\s+actual\b",
+        r"\bla\s+hora\s+actual\b",
+    ]
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def load_config() -> dict:
@@ -549,6 +573,14 @@ class TretaPanel(tk.Tk):
         wake = (self.cfg.get("wake_word") or "").lower().strip()
         if wake and wake in t:
             t = t.replace(wake, "").strip(" ,.:;!?¡¿")
+        t_norm = normalize_text(t)
+
+        if is_time_request(t_norm):
+            now = datetime.now().strftime("%H:%M")
+            answer = f"Son las {now}."
+            self._log(f"🕒 Hora local: {now}\n")
+            self.speak(answer)
+            return True
 
         for rule in self.cfg.get("voice_commands", []):
             m = (rule.get("match") or "").lower()
