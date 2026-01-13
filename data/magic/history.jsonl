@@ -1,0 +1,50 @@
+{"ts": "2025-12-29T15:33:43", "type": "music_load", "payload": {"folder": "C:\\treta\\music\\magic", "count": 90}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:33:45", "type": "music_play", "payload": {"track": "C:\\treta\\music\\magic\\101 The Prelude.mp3"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:11", "type": "music_pause", "payload": {}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:12", "type": "music_play", "payload": {"track": "C:\\treta\\music\\magic\\101 The Prelude.mp3"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:18", "type": "music_shuffle", "payload": {}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:18", "type": "music_play", "payload": {"track": "C:\\treta\\music\\magic\\106 Barret's Theme.mp3"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:21", "type": "music_pause", "payload": {}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:36", "type": "music_play", "payload": {"track": "C:\\treta\\music\\magic\\106 Barret's Theme.mp3"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:38", "type": "music_pause", "payload": {}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:58", "type": "life_change", "payload": {"player": 1, "delta": -1, "life": 39}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:59", "type": "life_change", "payload": {"player": 1, "delta": -1, "life": 38}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:34:59", "type": "life_change", "payload": {"player": 0, "delta": 1, "life": 41}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:35:00", "type": "life_change", "payload": {"player": 0, "delta": 5, "life": 46}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T15:35:00", "type": "life_change", "payload": {"player": 0, "delta": -1, "life": 45}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:28:43", "type": "rules_search", "payload": {"query": "que quiere decir que una cara tiene amenaza?"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:05", "type": "life_change", "payload": {"player": 1, "delta": 1, "life": 39}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:05", "type": "life_change", "payload": {"player": 1, "delta": 1, "life": 40}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:05", "type": "life_change", "payload": {"player": 1, "delta": 1, "life": 41}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:05", "type": "life_change", "payload": {"player": 1, "delta": -1, "life": 40}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:06", "type": "life_change", "payload": {"player": 1, "delta": -5, "life": 35}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:06", "type": "life_change", "payload": {"player": 1, "delta": -5, "life": 30}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:08", "type": "life_change", "payload": {"player": 0, "delta": 1, "life": 46}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:08", "type": "life_change", "payload": {"player": 0, "delta": 1, "life": 47}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:08", "type": "life_change", "payload": {"player": 0, "delta": -1, "life": 46}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:09", "type": "life_change", "payload": {"player": 0, "delta": -1, "life": 45}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:14", "type": "cmd_damage_change", "payload": {"attacker": 1, "defender": 0, "delta": 1, "value": 1}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:15", "type": "cmd_damage_change", "payload": {"attacker": 1, "defender": 0, "delta": 1, "value": 2}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:17", "type": "cmd_damage_change", "payload": {"attacker": 1, "defender": 0, "delta": -1, "value": 1}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:19", "type": "cmd_damage_change", "payload": {"attacker": 1, "defender": 0, "delta": 1, "value": 2}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:21", "type": "cmd_damage_change", "payload": {"attacker": 0, "defender": 1, "delta": 1, "value": 1}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:22", "type": "cmd_damage_change", "payload": {"attacker": 0, "defender": 1, "delta": 1, "value": 2}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:37:48", "type": "judge_ai", "payload": {"q": "que es amenaza??", "card": ""}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:38:02", "type": "rules_search", "payload": {"query": "que es amenaza??"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T16:38:07", "type": "judge_ai", "payload": {"q": "que es amenaza??", "card": ""}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T17:39:26", "type": "rules_search", "payload": {"query": "que carta es Animar?"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T17:39:41", "type": "judge_ai", "payload": {"q": "que carta es Animar?", "card": "es Animar"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T18:04:07", "type": "judge_ai", "payload": {"q": "que carta es Animar?", "card": "es Animar"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T18:04:11", "type": "rules_search", "payload": {"query": "que carta es Animar?"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T18:04:32", "type": "open_gatherer", "payload": {"name": "que c arta es Animar?"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T18:04:38", "type": "card_search", "payload": {"name": "que c arta es Animar?"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T18:04:53", "type": "card_search", "payload": {"name": "Animar"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T18:04:57", "type": "judge_ai", "payload": {"q": "que carta es Animar?", "card": "Animar"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T19:03:17", "type": "judge_ai", "payload": {"q": "Explicame esta carta porfavor", "card": "Venomthrope"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-29T19:03:17", "type": "card_search", "payload": {"name": "Venomthrope"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-30T16:13:07", "type": "cmd_tax_add", "payload": {"player": 1, "cmd_tax": 2}, "meta": {"format": "commander"}}
+{"ts": "2025-12-30T16:13:09", "type": "cmd_tax_add", "payload": {"player": 1, "cmd_tax": 4}, "meta": {"format": "commander"}}
+{"ts": "2025-12-30T16:13:11", "type": "cmd_tax_add", "payload": {"player": 1, "cmd_tax": 6}, "meta": {"format": "commander"}}
+{"ts": "2025-12-30T16:14:13", "type": "card_search", "payload": {"name": "Magus"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-30T16:14:38", "type": "card_search", "payload": {"name": "Magus Lucea Kane"}, "meta": {"format": "commander"}}
+{"ts": "2025-12-30T16:14:47", "type": "judge_ai", "payload": {"q": "se pueede gastar el mana que da su habilidad al girarla tal cual baja al ccampo de batalla?", "card": "Magus Lucea Kane"}, "meta": {"format": "commander"}}

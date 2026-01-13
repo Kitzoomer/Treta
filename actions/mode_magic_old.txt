@@ -1,0 +1,28 @@
+Write-Host "=== TRETA · MODO MAGIC ==="
+
+$firefox = "$env:ProgramFiles\Mozilla Firefox\firefox.exe"
+if (-not (Test-Path $firefox)) {
+    $firefox = "${env:ProgramFiles(x86)}\Mozilla Firefox\firefox.exe"
+}
+
+# YouTube con autoplay (mejor con mute para que no lo bloquee)
+$yt = "https://www.youtube.com/watch?v=0p6UidTS7Ao&autoplay=1&mute=1"
+$life = "https://lifecounter.app/?force=true"
+
+# Abrir Firefox con ambas pestañas (primero YouTube)
+if (Test-Path $firefox) {
+    Start-Process -FilePath $firefox -ArgumentList @($yt, $life)
+} else {
+    Start-Process $yt
+    Start-Process $life
+}
+
+Start-Sleep -Seconds 6
+
+# Enviar teclas: K (play) por si autoplay falla, luego F11 para fullscreen
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.SendKeys]::SendWait("k")
+Start-Sleep -Milliseconds 200
+[System.Windows.Forms.SendKeys]::SendWait("{F11}")
+
+Write-Host "Modo Magic activado (video + fullscreen)."

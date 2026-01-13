@@ -1,0 +1,103 @@
+﻿{
+    "language":  "es",
+    "model":  "small",
+    "sample_rate":  48000,
+    "channels":  1,
+    "mic_device_name_contains":  "fifine",
+    "mic_device_index":  null,
+    "max_record_sec":  20,
+    "end_silence_sec":  1.8,
+    "noise_calib_sec":  1,
+    "thresh_mult":  2.6,
+    "system_prompt":  "Eres Treta la Torreta: tecnica, clara, curiosa y creativa. Responde en espaÃƒÆ’Ã‚Â±ol, directo y ÃƒÆ’Ã‚Âºtil.",
+    "wake_word":  "treta",
+    "panel_buttons_left":  [
+                               {
+                                   "label":  "Modo Trabajo",
+                                   "action":  "mode_work"
+                               },
+                               {
+                                   "label":  "Apuntar idea",
+                                   "action":  "idea_prompt"
+                               },
+                               {
+                                   "label":  "Reposo",
+                                   "action":  "presence_sleep"
+                               }
+                           ],
+    "panel_buttons_right":  [
+                                {
+                                    "label":  "Modo Magic",
+                                    "action":  "mode_magic"
+                                },
+                                {
+                                    "label":  "Modo Caos",
+                                    "action":  "mode_chaos"
+                                },
+                                {
+                                    "label":  "Presencia ON",
+                                    "action":  "presence_start"
+                                },
+                                {
+                                    "label":  "Apagar PC (DESACTIVADO)",
+                                    "action":  "shutdown_safe",
+                                    "needs_confirm":  true
+                                }
+                            ],
+    "actions":  {
+                    "presence_start":  {
+                                           "type":  "ps1",
+                                           "path":  "actions/presence_start.ps1"
+                                       },
+                    "presence_sleep":  {
+                                           "type":  "ps1",
+                                           "path":  "actions/presence_sleep.ps1"
+                                       },
+                    "mode_work":  {
+                                      "type":  "ps1",
+                                      "path":  "actions/mode_work.ps1"
+                                  },
+                    "mode_magic":  {
+                                       "type":  "ps1",
+                                       "path":  "actions/mode_magic.ps1"
+                                   },
+                    "mode_chaos":  {
+                                       "type":  "ps1",
+                                       "path":  "actions/mode_chaos.ps1"
+                                   },
+                    "shutdown_safe":  {
+                                          "type":  "ps1",
+                                          "path":  "actions/shutdown_safe.ps1"
+                                      }
+                },
+    "voice_commands":  [
+                           {
+                               "match":  "activa el modo trabajo",
+                               "action":  "mode_work"
+                           },
+                           {
+                               "match":  "activa el modo magic",
+                               "action":  "mode_magic"
+                           },
+                           {
+                               "match":  "activa el modo caos",
+                               "action":  "mode_chaos"
+                           },
+                           {
+                               "match":  "me voy",
+                               "action":  "presence_sleep"
+                           },
+                           {
+                               "match":  "apunta esta idea",
+                               "action":  "idea_prompt"
+                           },
+                           {
+                               "match":  "apaga el pc",
+                               "action":  "shutdown_safe",
+                               "needs_confirm":  true
+                           }
+                       ],
+    "vosk_model_path":  "models/vosk-es",
+    "wake_cooldown_sec":  2,
+    "wake_sample_rate":  16000
+}
