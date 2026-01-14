@@ -668,6 +668,12 @@ class TretaPanel(tk.Tk):
             self._log(f"⚠ Acción no definida: {action_id}\n")
             return
 
+        if action_id == "mode_profile":
+            from modes.profile import open_profile_mode
+
+            open_profile_mode(self)
+            return
+
         self._diary("action", action_id)
 
         typ = spec.get("type", "ps1")
