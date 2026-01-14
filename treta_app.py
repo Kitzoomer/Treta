@@ -40,6 +40,7 @@ from ui_theme import (
 BASE_DIR = os.path.dirname(__file__)
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 APP_BUILD = "wakeword-fix-2"
+APP_BUILD = "wakeword-fix-1"
 
 
 def load_config() -> dict:
@@ -696,6 +697,28 @@ class TretaApp(ctk.CTk):
                     if not matched and final_norm:
                         matched = wake_word_matches(final_norm, wake_candidates, self.wake_word_threshold)
                     if matched:
+                    matched = wake_word_matches(
+                        partial_norm, wake_candidates, self.wake_word_threshold
+                    )
+                    if not matched and final_norm:
+                        matched = wake_word_matches(
+                            final_norm, wake_candidates, self.wake_word_threshold
+                        )
+                    if matched:
+                    partial_hit = wake_word_matches(
+                        partial_norm, wake_candidates, self.wake_word_threshold
+                    )
+                    final_hit = False
+                    if final_norm:
+                        final_hit = wake_word_matches(
+                            final_norm, wake_candidates, self.wake_word_threshold
+                        )
+                    if partial_hit or final_hit:
+                    if wake_word_matches(partial_norm, wake_candidates, self.wake_word_threshold) or (
+                        final_norm and wake_word_matches(final_norm, wake_candidates, self.wake_word_threshold)
+                    if wake_word_norm and (
+                        wake_word_norm in partial_norm.split() or wake_word_norm in final_norm.split()
+                    ):
                         now = time.time()
                         if now - last_trigger < self.wake_cooldown_sec:
                             continue
