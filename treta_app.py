@@ -677,6 +677,15 @@ class TretaApp(ctk.CTk):
 
                     partial_norm = normalize_text(partial)
                     final_norm = normalize_text(final)
+                    partial_hit = wake_word_matches(
+                        partial_norm, wake_candidates, self.wake_word_threshold
+                    )
+                    final_hit = False
+                    if final_norm:
+                        final_hit = wake_word_matches(
+                            final_norm, wake_candidates, self.wake_word_threshold
+                        )
+                    if partial_hit or final_hit:
                     if wake_word_matches(partial_norm, wake_candidates, self.wake_word_threshold) or (
                         final_norm and wake_word_matches(final_norm, wake_candidates, self.wake_word_threshold)
                     if wake_word_norm and (
