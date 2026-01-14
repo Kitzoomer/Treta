@@ -15,6 +15,20 @@ import pyttsx3
 from openai import OpenAI
 from faster_whisper import WhisperModel
 
+from ui_theme import (
+    MECH_BG,
+    MECH_BORDER,
+    MECH_BTN_HOVER,
+    MECH_CARD,
+    MECH_CARD_2,
+    MECH_MUTED,
+    MECH_OK,
+    MECH_PANEL,
+    MECH_RED,
+    MECH_RED_DARK,
+    MECH_TEXT,
+)
+
 BASE_DIR = os.path.dirname(__file__)
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 
@@ -30,6 +44,30 @@ STATE_PATH = os.path.join(DATA_DIR, "state.json")
 IDEAS_PATH = os.path.join(DATA_DIR, "ideas.jsonl")
 DIARY_PATH = os.path.join(DATA_DIR, "diary.jsonl")
 INTENTS_PATH = os.path.join(DATA_DIR, "intents.jsonl")
+
+DEFAULT_PANEL_BUTTONS_LEFT = [
+    {"label": "Modo Trabajo", "action": "mode_work"},
+    {"label": "Modo Perfil", "action": "mode_profile"},
+    {"label": "Apuntar idea", "action": "idea_prompt"},
+    {"label": "Reposo", "action": "presence_sleep"},
+]
+
+DEFAULT_PANEL_BUTTONS_RIGHT = [
+    {"label": "Modo Magic", "action": "mode_magic"},
+    {"label": "Modo Caos", "action": "mode_chaos"},
+    {"label": "Presencia ON", "action": "presence_start"},
+    {"label": "Apagar PC (DESACTIVADO)", "action": "shutdown_safe", "needs_confirm": True},
+]
+
+DEFAULT_ACTIONS = {
+    "presence_start": {"type": "ps1", "path": "actions/presence_start.ps1"},
+    "presence_sleep": {"type": "ps1", "path": "actions/presence_sleep.ps1"},
+    "mode_work": {"type": "ps1", "path": "actions/mode_work.ps1"},
+    "mode_magic": {"type": "ps1", "path": "actions/mode_magic.ps1"},
+    "mode_chaos": {"type": "ps1", "path": "actions/mode_chaos.ps1"},
+    "mode_profile": {"type": "py", "path": "actions/mode_profile.py"},
+    "shutdown_safe": {"type": "ps1", "path": "actions/shutdown_safe.ps1"},
+}
 
 
 def _ensure_dirs():
@@ -171,7 +209,35 @@ def is_time_request(text: str) -> bool:
 
 def load_config() -> dict:
     with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
-        return json.load(f)
+        cfg = json.load(f)
+    if not isinstance(cfg, dict):
+        return cfg
+    actions = cfg.get("actions")
+    if not isinstance(actions, dict):
+        actions = {}
+        cfg["actions"] = actions
+    for key, spec in DEFAULT_ACTIONS.items():
+        actions.setdefault(key, dict(spec))
+
+    left_buttons = cfg.get("panel_buttons_left")
+    if not isinstance(left_buttons, list):
+        left_buttons = []
+        cfg["panel_buttons_left"] = left_buttons
+    existing_left = {btn.get("action") for btn in left_buttons if isinstance(btn, dict)}
+    for btn in DEFAULT_PANEL_BUTTONS_LEFT:
+        if btn["action"] not in existing_left:
+            left_buttons.append(dict(btn))
+
+    right_buttons = cfg.get("panel_buttons_right")
+    if not isinstance(right_buttons, list):
+        right_buttons = []
+        cfg["panel_buttons_right"] = right_buttons
+    existing_right = {btn.get("action") for btn in right_buttons if isinstance(btn, dict)}
+    for btn in DEFAULT_PANEL_BUTTONS_RIGHT:
+        if btn["action"] not in existing_right:
+            right_buttons.append(dict(btn))
+
+    return cfg
 
 
 def rms(x: np.ndarray) -> float:
@@ -224,67 +290,57 @@ class TretaPanel(tk.Tk):
         self.title("TRETA — Panel de Control")
         self.geometry("1100x650")
         self.minsize(980, 600)
+        self.attributes("-fullscreen", True)
+        self.bind("<Escape>", lambda event: self.attributes("-fullscreen", False))
 
-        theme_bg = "#0b0f12"
-        theme_panel = "#0f151a"
-        theme_card = "#121b21"
-        theme_card_2 = "#10181e"
-        theme_border = "#2b3842"
-        theme_text = "#d6dde3"
-        theme_muted = "#93a4b1"
-        theme_red = "#c1121f"
-        theme_red_dark = "#7a0c12"
-        theme_btn_hover = "#1b2831"
-        theme_ok = "#2fd27d"
-
-        self.configure(bg=theme_bg)
+        self.configure(bg=MECH_BG)
 
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure(".", background=theme_bg, foreground=theme_text)
-        style.configure("TFrame", background=theme_bg)
-        style.configure("Panel.TFrame", background=theme_panel)
-        style.configure("Card.TFrame", background=theme_card)
-        style.configure("TLabel", background=theme_bg, foreground=theme_text, padding=(4, 2))
-        style.configure("Card.TLabel", background=theme_card, foreground=theme_text, padding=(4, 2))
+        style.configure(".", background=MECH_BG, foreground=MECH_TEXT)
+        style.configure("TFrame", background=MECH_BG)
+        style.configure("Panel.TFrame", background=MECH_PANEL)
+        style.configure("Card.TFrame", background=MECH_CARD)
+        style.configure("TLabel", background=MECH_BG, foreground=MECH_TEXT, padding=(4, 2))
+        style.configure("Card.TLabel", background=MECH_CARD, foreground=MECH_TEXT, padding=(4, 2))
         style.configure(
             "Header.TLabel",
-            background=theme_panel,
-            foreground=theme_text,
+            background=MECH_PANEL,
+            foreground=MECH_TEXT,
             font=("Segoe UI", 12, "bold"),
             padding=(4, 2),
         )
         style.configure(
             "TButton",
             padding=(10, 6),
-            background=theme_panel,
-            foreground=theme_text,
-            bordercolor=theme_border,
+            background=MECH_PANEL,
+            foreground=MECH_TEXT,
+            bordercolor=MECH_BORDER,
         )
         style.map(
             "TButton",
-            background=[("active", theme_btn_hover), ("pressed", theme_red_dark)],
-            foreground=[("disabled", theme_muted)],
+            background=[("active", MECH_BTN_HOVER), ("pressed", MECH_RED_DARK)],
+            foreground=[("disabled", MECH_MUTED)],
         )
         style.configure(
             "Success.TButton",
-            background=theme_ok,
-            foreground=theme_bg,
-            bordercolor=theme_ok,
+            background=MECH_OK,
+            foreground=MECH_BG,
+            bordercolor=MECH_OK,
         )
         style.configure(
             "Danger.TButton",
-            background=theme_red,
-            foreground=theme_text,
-            bordercolor=theme_red,
+            background=MECH_RED,
+            foreground=MECH_TEXT,
+            bordercolor=MECH_RED,
         )
         style.configure(
             "TProgressbar",
-            background=theme_red,
-            troughcolor=theme_card_2,
-            bordercolor=theme_border,
-            lightcolor=theme_red,
-            darkcolor=theme_red,
+            background=MECH_RED,
+            troughcolor=MECH_CARD_2,
+            bordercolor=MECH_BORDER,
+            lightcolor=MECH_RED,
+            darkcolor=MECH_RED,
         )
 
         # IA (OpenAI)
