@@ -51,6 +51,37 @@ def _rms(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(x * x) + 1e-12))
 
 
+def parse_int(value, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def resolve_audio_settings(cfg: dict, mic_index: int | None) -> tuple[int, int]:
+    sr = parse_int(cfg.get("sample_rate", None))
+    ch = parse_int(cfg.get("channels", None))
+
+    if sr is None or ch is None:
+        try:
+            dev = sd.query_devices(mic_index) if mic_index is not None else sd.query_devices()
+            if sr is None:
+                sr = int(dev.get("default_samplerate", 48000))
+            if ch is None:
+                ch = max(1, int(dev.get("max_input_channels", 1)))
+        except Exception:
+            sr = sr or 48000
+            ch = ch or 1
+
+    return int(sr), max(1, int(ch))
+
+
 def pick_input_device(cfg: dict) -> int | None:
     """
     1) Si config.json tiene mic_device_index -> usa ese.
@@ -605,7 +636,7 @@ class TretaApp(ctk.CTk):
             audio = self._record_until_silence()
             self.after(0, lambda: self.meter.set(0))
 
-            sr = int(self.cfg.get("sample_rate", 48000))
+            sr, _ = resolve_audio_settings(self.cfg, self.mic_index)
             if audio is None or len(audio) < int(sr * 0.25):
                 self.after(0, lambda: self._log("📝 Comando: (nada claro)\n\n"))
                 return
@@ -687,7 +718,7 @@ class TretaApp(ctk.CTk):
             audio = self._record_until_silence()
             self.after(0, lambda: self.meter.set(0))
 
-            sr = int(self.cfg.get("sample_rate", 48000))
+            sr, _ = resolve_audio_settings(self.cfg, self.mic_index)
             if audio is None or len(audio) < int(sr * 0.25):
                 self._ui_finish()
                 return
@@ -745,8 +776,7 @@ class TretaApp(ctk.CTk):
             return None
 
     def _record_until_silence(self) -> np.ndarray | None:
-        sr = int(self.cfg.get("sample_rate", 48000))
-        ch = int(self.cfg.get("channels", 1))
+        sr, ch = resolve_audio_settings(self.cfg, self.mic_index)
 
         max_sec = float(self.cfg.get("max_record_sec", 20))
         end_silence = float(self.cfg.get("end_silence_sec", 1.8))
