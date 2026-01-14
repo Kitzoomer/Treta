@@ -18,6 +18,7 @@
                                "tretas"
                            ],
     "wake_word_fuzzy_threshold":  0.82,
+    "wake_debug":  false,
     "stt_initial_prompt":  "Treta,",
     "min_input_rms":  0.004,
     "max_input_rms":  0.35,

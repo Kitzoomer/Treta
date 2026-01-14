@@ -39,6 +39,7 @@ from ui_theme import (
 # ===========================
 BASE_DIR = os.path.dirname(__file__)
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+APP_BUILD = "wakeword-fix-2"
 APP_BUILD = "wakeword-fix-1"
 
 
@@ -219,6 +220,7 @@ class TretaApp(ctk.CTk):
         self.wake_word = (self.cfg.get("wake_word", "treta") or "treta").strip().lower()
         self.wake_word_variants = self.cfg.get("wake_word_variants", [])
         self.wake_word_threshold = float(self.cfg.get("wake_word_fuzzy_threshold", 0.86))
+        self.wake_debug = bool(self.cfg.get("wake_debug", False))
         if not isinstance(self.wake_word_variants, list):
             self.wake_word_variants = []
         self.wake_word_variants = [
@@ -258,6 +260,7 @@ class TretaApp(ctk.CTk):
         # Logs iniciales
         self._log("Treta Panel listo.\n")
         self._log(f"Build: {APP_BUILD}\n")
+        self._log(f"Archivo: {__file__}\n")
         if not api_key:
             self._log("⚠ Falta OPENAI_API_KEY. (Sin esto no hay voz/IA)\n")
         else:
@@ -601,6 +604,7 @@ class TretaApp(ctk.CTk):
             pass
 
         last_trigger = 0.0
+        last_debug_log = 0.0
 
         self.after(0, lambda: self._log("🟠 Wake-word ON: escuchando en segundo plano…\n"))
 
@@ -679,6 +683,20 @@ class TretaApp(ctk.CTk):
 
                     partial_norm = normalize_text(partial)
                     final_norm = normalize_text(final)
+                    if self.wake_debug and (partial_norm or final_norm):
+                        now = time.time()
+                        if now - last_debug_log >= 0.6:
+                            last_debug_log = now
+                            self.after(
+                                0,
+                                lambda pn=partial_norm, fn=final_norm: self._log(
+                                    f"🧪 Wake-debug: partial='{pn}' final='{fn}'\n"
+                                ),
+                            )
+                    matched = wake_word_matches(partial_norm, wake_candidates, self.wake_word_threshold)
+                    if not matched and final_norm:
+                        matched = wake_word_matches(final_norm, wake_candidates, self.wake_word_threshold)
+                    if matched:
                     matched = wake_word_matches(
                         partial_norm, wake_candidates, self.wake_word_threshold
                     )
