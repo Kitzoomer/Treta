@@ -5,6 +5,7 @@ import wave
 import queue
 import threading
 import tempfile
+import unicodedata
 
 import numpy as np
 import sounddevice as sd
@@ -49,6 +50,46 @@ def load_config() -> dict:
 def _rms(x: np.ndarray) -> float:
     x = x.astype(np.float32)
     return float(np.sqrt(np.mean(x * x) + 1e-12))
+
+
+def parse_int(value, default: int | None = None) -> int | None:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def resolve_audio_settings(cfg: dict, mic_index: int | None) -> tuple[int, int]:
+    sr = parse_int(cfg.get("sample_rate", None))
+    ch = parse_int(cfg.get("channels", None))
+
+    if sr is None or ch is None:
+        try:
+            dev = sd.query_devices(mic_index) if mic_index is not None else sd.query_devices()
+            if sr is None:
+                sr = int(dev.get("default_samplerate", 48000))
+            if ch is None:
+                ch = max(1, int(dev.get("max_input_channels", 1)))
+        except Exception:
+            sr = sr or 48000
+            ch = ch or 1
+
+    return int(sr), max(1, int(ch))
+
+
+def normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    lowered = text.lower()
+    return "".join(
+        c for c in unicodedata.normalize("NFD", lowered) if unicodedata.category(c) != "Mn"
+    )
 
 
 def pick_input_device(cfg: dict) -> int | None:
@@ -517,6 +558,7 @@ class TretaApp(ctk.CTk):
 
         wake_sr = int(self.wake_sample_rate)
         wake_ch = 1
+        wake_word_norm = normalize_text(self.wake_word)
 
         grammar = json.dumps([self.wake_word, "[unk]"])
         rec = KaldiRecognizer(model, wake_sr, grammar)
@@ -542,14 +584,39 @@ class TretaApp(ctk.CTk):
                 return False
             return True
 
+        stream = None
         try:
-            with sd.RawInputStream(
-                samplerate=wake_sr,
-                blocksize=8000,   # ~0.5s
-                dtype="int16",
-                channels=wake_ch,
-                device=self.mic_index,
-            ) as stream:
+            try:
+                stream = sd.RawInputStream(
+                    samplerate=wake_sr,
+                    blocksize=8000,   # ~0.5s
+                    dtype="int16",
+                    channels=wake_ch,
+                    device=self.mic_index,
+                )
+            except Exception as e:
+                self.after(
+                    0,
+                    lambda: self._log(
+                        f"⚠ Wake-word: no pude abrir micro a {wake_sr} Hz ({e}). Reintentando con default…\n"
+                    ),
+                )
+                dev = sd.query_devices(self.mic_index) if self.mic_index is not None else sd.query_devices()
+                wake_sr = int(dev.get("default_samplerate", wake_sr))
+                rec = KaldiRecognizer(model, wake_sr, grammar)
+                try:
+                    rec.SetWords(False)
+                except Exception:
+                    pass
+                stream = sd.RawInputStream(
+                    samplerate=wake_sr,
+                    blocksize=8000,
+                    dtype="int16",
+                    channels=wake_ch,
+                    device=self.mic_index,
+                )
+
+            with stream:
                 while not self.hotword_stop.is_set():
                     if not _should_listen():
                         time.sleep(0.05)
@@ -560,17 +627,28 @@ class TretaApp(ctk.CTk):
                         continue
 
                     try:
-                        rec.AcceptWaveform(data)
-                        pr = rec.PartialResult()
+                        is_final = rec.AcceptWaveform(data)
+                        partial = ""
+                        final = ""
+                        if is_final:
+                            try:
+                                j = json.loads(rec.Result())
+                                final = (j.get("text", "") or "").strip()
+                            except Exception:
+                                final = ""
                         try:
-                            j = json.loads(pr)
-                            partial = (j.get("partial", "") or "").strip().lower()
+                            j = json.loads(rec.PartialResult())
+                            partial = (j.get("partial", "") or "").strip()
                         except Exception:
                             partial = ""
                     except Exception:
                         continue
 
-                    if self.wake_word and self.wake_word in partial.split():
+                    partial_norm = normalize_text(partial)
+                    final_norm = normalize_text(final)
+                    if wake_word_norm and (
+                        wake_word_norm in partial_norm.split() or wake_word_norm in final_norm.split()
+                    ):
                         now = time.time()
                         if now - last_trigger < self.wake_cooldown_sec:
                             continue
@@ -605,7 +683,7 @@ class TretaApp(ctk.CTk):
             audio = self._record_until_silence()
             self.after(0, lambda: self.meter.set(0))
 
-            sr = int(self.cfg.get("sample_rate", 48000))
+            sr, _ = resolve_audio_settings(self.cfg, self.mic_index)
             if audio is None or len(audio) < int(sr * 0.25):
                 self.after(0, lambda: self._log("📝 Comando: (nada claro)\n\n"))
                 return
@@ -687,7 +765,7 @@ class TretaApp(ctk.CTk):
             audio = self._record_until_silence()
             self.after(0, lambda: self.meter.set(0))
 
-            sr = int(self.cfg.get("sample_rate", 48000))
+            sr, _ = resolve_audio_settings(self.cfg, self.mic_index)
             if audio is None or len(audio) < int(sr * 0.25):
                 self._ui_finish()
                 return
@@ -745,8 +823,7 @@ class TretaApp(ctk.CTk):
             return None
 
     def _record_until_silence(self) -> np.ndarray | None:
-        sr = int(self.cfg.get("sample_rate", 48000))
-        ch = int(self.cfg.get("channels", 1))
+        sr, ch = resolve_audio_settings(self.cfg, self.mic_index)
 
         max_sec = float(self.cfg.get("max_record_sec", 20))
         end_silence = float(self.cfg.get("end_silence_sec", 1.8))
