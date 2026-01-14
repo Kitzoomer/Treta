@@ -192,6 +192,94 @@ def save_debug_segments(segments: list[dict], path: Path) -> None:
         json.dump(segments, f, ensure_ascii=False, indent=2)
 
 
+def resolve_vosk_model_path(cfg: dict) -> Path:
+    cfg_path = str(cfg.get("vosk_model_path", os.path.join("models", "vosk-es"))).strip()
+    if os.path.isabs(cfg_path):
+        return Path(cfg_path)
+    return (BASE_DIR / cfg_path).resolve()
+
+
+def prepare_wake_word_model(model_path: Path):
+    try:
+        from vosk import Model, SetLogLevel
+    except Exception:
+        print("⚠️ Wake-word: falta 'vosk'. Instala: py -m pip install vosk")
+        return None
+
+    if not model_path.exists():
+        print("⚠️ Wake-word: no encuentro modelo Vosk en:")
+        print(f"   {model_path}")
+        print("   Crea la carpeta y pon un modelo ES dentro.")
+        return None
+
+    try:
+        SetLogLevel(-1)
+    except Exception:
+        pass
+
+    try:
+        return Model(str(model_path))
+    except Exception as e:
+        print(f"⚠️ Wake-word: no pude cargar modelo Vosk: {e}")
+        return None
+
+
+def wait_for_wake_word(
+    wake_word: str,
+    model,
+    wake_sample_rate: int,
+    device: int,
+    wake_cooldown_sec: float,
+) -> bool:
+    from vosk import KaldiRecognizer
+
+    grammar = json.dumps([wake_word, "[unk]"])
+    rec = KaldiRecognizer(model, int(wake_sample_rate), grammar)
+    try:
+        rec.SetWords(False)
+    except Exception:
+        pass
+
+    last_trigger = 0.0
+    print("🟠 Wake-word ON: escuchando en segundo plano…")
+
+    with sd.RawInputStream(
+        samplerate=int(wake_sample_rate),
+        blocksize=8000,
+        dtype="int16",
+        channels=1,
+        device=device,
+    ) as stream:
+        while True:
+            if tts_speaking.is_set():
+                time.sleep(0.05)
+                continue
+
+            data, _ = stream.read(8000)
+            if not data:
+                continue
+
+            try:
+                rec.AcceptWaveform(data)
+                pr = rec.PartialResult()
+                try:
+                    j = json.loads(pr)
+                    partial = (j.get("partial", "") or "").strip().lower()
+                except Exception:
+                    partial = ""
+            except Exception:
+                continue
+
+            if wake_word and wake_word in partial.split():
+                now = time.time()
+                if now - last_trigger < wake_cooldown_sec:
+                    continue
+                last_trigger = now
+                print(f"🟠 Wake-word detectada: {wake_word.upper()}")
+                time.sleep(0.15)
+                return True
+
+
 def tts_worker():
     """Hilo dedicado a TTS. Inicializa COM para evitar silencios/bloqueos en Windows."""
     global tts_last_end
@@ -538,6 +626,36 @@ def handle_local_intent(text: str, cfg: dict) -> tuple[bool, str, str, str]:
             if matched:
                 return True, render_local_response(response, cfg), name, pattern_norm
     return False, "", "", ""
+
+
+def handle_query(q: str, cfg: dict) -> None:
+    q_norm = normalize_text(q)
+    matched, response, intent_name, pattern = handle_local_intent(q_norm, cfg)
+    if matched:
+        print(f"🎯 Intento local: {intent_name} (patrón: {pattern})")
+        log_intent(
+            {
+                "source": "voice",
+                "intent": intent_name,
+                "pattern": pattern,
+                "text": q_norm,
+                "response": response,
+            }
+        )
+        time.sleep(0.2)
+        speak(response)
+    if is_time_request(q_norm):
+        now = datetime.now().strftime("%H:%M")
+        answer = f"Son las {now}."
+        print("🤖 Treta:", answer)
+        time.sleep(0.2)
+        speak(answer)
+        return
+    speak("Procesando.")
+    answer = ask_chatgpt(q)
+    print("🤖 Treta:", answer)
+    time.sleep(0.2)
+    speak(answer)
 def is_time_request(text: str) -> bool:
     if "hora" not in text:
         return False
@@ -611,6 +729,10 @@ def main():
         cfg.get("end_silence_sec", "unknown"),
         cfg.get("thresh_mult", "unknown"),
     )
+    logger.info("wake_word: %s", cfg.get("wake_word", "treta"))
+    logger.info("vosk_model_path: %s", cfg.get("vosk_model_path", "models/vosk-es"))
+    logger.info("wake_sample_rate: %s", cfg.get("wake_sample_rate", 16000))
+    logger.info("wake_cooldown_sec: %s", cfg.get("wake_cooldown_sec", 2.0))
     if args.debug:
         logger.info("Debug mode activo (logs/treta.log, data/debug_last.wav).")
     if args.debug_dummy:
@@ -653,6 +775,12 @@ def main():
     min_rms = parse_float(cfg.get("min_input_rms", 0.0), 0.0) or 0.0
     max_rms = parse_float(cfg.get("max_input_rms", 1.0), 1.0) or 1.0
     stt_prompt = (cfg.get("stt_initial_prompt") or "").strip() or None
+    wake_word = (cfg.get("wake_word", "treta") or "treta").strip().lower()
+    WAKE_WORDS[:] = [wake_word]
+    wake_cooldown_sec = float(cfg.get("wake_cooldown_sec", 2.0))
+    wake_sample_rate = int(cfg.get("wake_sample_rate", 16000))
+    wake_model_path = resolve_vosk_model_path(cfg)
+    wake_model = prepare_wake_word_model(wake_model_path)
 
     if args.mic is not None:
         mic_device = args.mic
@@ -699,18 +827,32 @@ def main():
             print_input_devices()
             return
 
-    speak("Treta en línea. Voz verificada. Dime: Treta, y tu pregunta.")
+    speak(f"Treta en línea. Voz verificada. Dime: {wake_word}, y tu pregunta.")
     time.sleep(0.2)
 
-    print("🎙️ Treta escuchando. Di: 'Treta, ...' (Ctrl+C para salir)")
+    print(f"🎙️ Treta escuchando. Di: '{wake_word}, ...' (Ctrl+C para salir)")
 
     empty_streak = 0
+    use_wake_word = wake_model is not None
     try:
         while True:
             # Antieco
             if tts_speaking.is_set() or (time.time() - tts_last_end) < TTS_COOLDOWN_SEC:
                 time.sleep(0.05)
                 continue
+
+            if use_wake_word:
+                ok = wait_for_wake_word(
+                    wake_word,
+                    wake_model,
+                    wake_sample_rate,
+                    mic_device,
+                    wake_cooldown_sec,
+                )
+                if not ok:
+                    print("⚠️ Wake-word desactivado. Volviendo a modo texto con 'treta'.")
+                    use_wake_word = False
+                    continue
 
             try:
                 audio_16k, segments, speech_detected = record_utterance(
@@ -745,6 +887,7 @@ def main():
                     print("🧾 Dispositivos de entrada disponibles:")
                     print_input_devices()
                     continue
+
             if args.debug:
                 save_debug_audio(audio_16k, DATA_DIR / "debug_last.wav")
                 save_debug_segments(segments, DATA_DIR / "debug_last_segments.json")
@@ -769,41 +912,23 @@ def main():
                 continue
 
             print("📝 Oído:", text)
-            q = extract_query(text)
             empty_streak = 0
 
-            if q is None and "treta" in text.lower():
-                speak("Te escucho. Dime tu pregunta.")
-                continue
-
-            if q:
-                q_norm = normalize_text(q)
-                matched, response, intent_name, pattern = handle_local_intent(q_norm, cfg)
-                if matched:
-                    print(f"🎯 Intento local: {intent_name} (patrón: {pattern})")
-                    log_intent(
-                        {
-                            "source": "voice",
-                            "intent": intent_name,
-                            "pattern": pattern,
-                            "text": q_norm,
-                            "response": response,
-                        }
-                    )
-                    time.sleep(0.2)
-                    speak(response)
-                if is_time_request(q_norm):
-                    now = datetime.now().strftime("%H:%M")
-                    answer = f"Son las {now}."
-                    print("🤖 Treta:", answer)
-                    time.sleep(0.2)
-                    speak(answer)
+            if use_wake_word:
+                cleaned = text.strip()
+                if cleaned.lower().startswith(wake_word + " "):
+                    cleaned = cleaned[len(wake_word) :].strip(" ,.:;!?¡¿-")
+                if not cleaned or cleaned.lower() == wake_word:
+                    speak("Te escucho. Dime tu pregunta.")
                     continue
-                speak("Procesando.")
-                answer = ask_chatgpt(q)
-                print("🤖 Treta:", answer)
-                time.sleep(0.2)
-                speak(answer)
+                handle_query(cleaned, cfg)
+            else:
+                q = extract_query(text)
+                if q is None and wake_word in text.lower():
+                    speak("Te escucho. Dime tu pregunta.")
+                    continue
+                if q:
+                    handle_query(q, cfg)
 
     except KeyboardInterrupt:
         speak("Treta apagando escucha.")
