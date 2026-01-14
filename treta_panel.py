@@ -170,7 +170,7 @@ def is_time_request(text: str) -> bool:
 
 
 def load_config() -> dict:
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
         return json.load(f)
 
 
@@ -225,13 +225,67 @@ class TretaPanel(tk.Tk):
         self.geometry("1100x650")
         self.minsize(980, 600)
 
+        theme_bg = "#0b0f12"
+        theme_panel = "#0f151a"
+        theme_card = "#121b21"
+        theme_card_2 = "#10181e"
+        theme_border = "#2b3842"
+        theme_text = "#d6dde3"
+        theme_muted = "#93a4b1"
+        theme_red = "#c1121f"
+        theme_red_dark = "#7a0c12"
+        theme_btn_hover = "#1b2831"
+        theme_ok = "#2fd27d"
+
+        self.configure(bg=theme_bg)
+
         style = ttk.Style()
-        try:
-            style.theme_use("vista")
-        except Exception:
-            style.theme_use("clam")
-        style.configure("TButton", padding=(10, 6))
-        style.configure("TLabel", padding=(4, 2))
+        style.theme_use("clam")
+        style.configure(".", background=theme_bg, foreground=theme_text)
+        style.configure("TFrame", background=theme_bg)
+        style.configure("Panel.TFrame", background=theme_panel)
+        style.configure("Card.TFrame", background=theme_card)
+        style.configure("TLabel", background=theme_bg, foreground=theme_text, padding=(4, 2))
+        style.configure("Card.TLabel", background=theme_card, foreground=theme_text, padding=(4, 2))
+        style.configure(
+            "Header.TLabel",
+            background=theme_panel,
+            foreground=theme_text,
+            font=("Segoe UI", 12, "bold"),
+            padding=(4, 2),
+        )
+        style.configure(
+            "TButton",
+            padding=(10, 6),
+            background=theme_panel,
+            foreground=theme_text,
+            bordercolor=theme_border,
+        )
+        style.map(
+            "TButton",
+            background=[("active", theme_btn_hover), ("pressed", theme_red_dark)],
+            foreground=[("disabled", theme_muted)],
+        )
+        style.configure(
+            "Success.TButton",
+            background=theme_ok,
+            foreground=theme_bg,
+            bordercolor=theme_ok,
+        )
+        style.configure(
+            "Danger.TButton",
+            background=theme_red,
+            foreground=theme_text,
+            bordercolor=theme_red,
+        )
+        style.configure(
+            "TProgressbar",
+            background=theme_red,
+            troughcolor=theme_card_2,
+            bordercolor=theme_border,
+            lightcolor=theme_red,
+            darkcolor=theme_red,
+        )
 
         # IA (OpenAI)
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -276,7 +330,7 @@ class TretaPanel(tk.Tk):
 
     # ---------- UI ----------
     def _build_ui(self):
-        root = ttk.Frame(self, padding=10)
+        root = ttk.Frame(self, padding=10, style="Card.TFrame")
         root.pack(fill="both", expand=True)
 
         root.columnconfigure(0, weight=0)
@@ -284,52 +338,76 @@ class TretaPanel(tk.Tk):
         root.columnconfigure(2, weight=0)
         root.rowconfigure(1, weight=1)
 
-        self.left = ttk.Frame(root)
+        self.left = ttk.Frame(root, style="Panel.TFrame")
         self.left.grid(row=0, column=0, rowspan=3, sticky="nsw", padx=(0, 8))
-        ttk.Label(self.left, text="Acciones", font=("Segoe UI", 12, "bold")).pack(pady=(0, 8))
+        ttk.Label(self.left, text="Acciones", style="Header.TLabel").pack(pady=(0, 8))
 
-        self.right = ttk.Frame(root)
+        self.right = ttk.Frame(root, style="Panel.TFrame")
         self.right.grid(row=0, column=2, rowspan=3, sticky="nse", padx=(8, 0))
-        ttk.Label(self.right, text="Sistema", font=("Segoe UI", 12, "bold")).pack(pady=(0, 8))
+        ttk.Label(self.right, text="Sistema", style="Header.TLabel").pack(pady=(0, 8))
 
-        top = ttk.Frame(root)
+        top = ttk.Frame(root, style="Card.TFrame")
         top.grid(row=0, column=1, sticky="ew", padx=8, pady=(0, 8))
         top.columnconfigure(2, weight=1)
 
         self.btn_listen = ttk.Button(top, text="🎙️ Escuchar", command=self.toggle_listen)
         self.btn_listen.grid(row=0, column=0, sticky="w")
 
-        self.status = ttk.Label(top, text="Estado: en espera")
+        self.status = ttk.Label(top, text="Estado: en espera", style="Card.TLabel")
         self.status.grid(row=0, column=1, sticky="w", padx=10)
 
         self.meter = ttk.Progressbar(top, length=260, mode="determinate")
         self.meter.grid(row=0, column=3, sticky="e")
 
-        center = ttk.Frame(root)
+        center = ttk.Frame(root, style="Card.TFrame")
         center.grid(row=1, column=1, sticky="nsew", padx=8)
         center.rowconfigure(0, weight=1)
         center.columnconfigure(0, weight=1)
 
-        self.text = scrolledtext.ScrolledText(center, wrap="word", font=("Segoe UI", 11))
+        self.text = scrolledtext.ScrolledText(
+            center,
+            wrap="word",
+            font=("Segoe UI", 11),
+            bg="#121b21",
+            fg="#d6dde3",
+            insertbackground="#d6dde3",
+            selectbackground="#1b2831",
+            highlightbackground="#2b3842",
+            highlightcolor="#2b3842",
+        )
         self.text.grid(row=0, column=0, sticky="nsew")
 
-        self.confirm_frame = ttk.Frame(root, padding=10)
+        self.confirm_frame = ttk.Frame(root, padding=10, style="Card.TFrame")
         self.confirm_frame.grid(row=2, column=1, sticky="ew", padx=8, pady=(8, 0))
         self.confirm_frame.columnconfigure(0, weight=1)
 
-        self.confirm_label = ttk.Label(self.confirm_frame, text="")
+        self.confirm_label = ttk.Label(self.confirm_frame, text="", style="Card.TLabel")
         self.confirm_label.grid(row=0, column=0, sticky="w")
 
-        self.btn_confirm_yes = ttk.Button(self.confirm_frame, text="✅ Ejecutar", command=self._confirm_yes)
-        self.btn_confirm_no = ttk.Button(self.confirm_frame, text="❌ Cancelar", command=self._confirm_no)
+        self.btn_confirm_yes = ttk.Button(
+            self.confirm_frame,
+            text="✅ Ejecutar",
+            style="Success.TButton",
+            command=self._confirm_yes,
+        )
+        self.btn_confirm_no = ttk.Button(
+            self.confirm_frame,
+            text="❌ Cancelar",
+            style="Danger.TButton",
+            command=self._confirm_no,
+        )
         self.btn_confirm_yes.grid(row=0, column=1, padx=6)
         self.btn_confirm_no.grid(row=0, column=2)
 
         self._hide_confirm()
 
-        bottom = ttk.Frame(root)
+        bottom = ttk.Frame(root, style="Card.TFrame")
         bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        ttk.Label(bottom, text="Treta Panel: voz + botones. Acciones peligrosas requieren confirmación.").pack(side="left")
+        ttk.Label(
+            bottom,
+            text="Treta Panel: voz + botones. Acciones peligrosas requieren confirmación.",
+            style="Card.TLabel",
+        ).pack(side="left")
 
         self._build_side_buttons()
 
@@ -703,12 +781,12 @@ class TretaPanel(tk.Tk):
         t_norm = normalize_text(t)
 
         if self._handle_local_intent(t_norm):
-actriz         if is_time_request(t_norm):
-            now = datetime.now().strftime("%H:%M")
-            answer = f"Son las {now}."
-            self._log(f"🕒 Hora local: {now}\n")
-            self.speak(answer)
-            return True
+            if is_time_request(t_norm):
+                now = datetime.now().strftime("%H:%M")
+                answer = f"Son las {now}."
+                self._log(f"🕒 Hora local: {now}\n")
+                self.speak(answer)
+                return True
 
         for rule in self.cfg.get("voice_commands", []):
             m = (rule.get("match") or "").lower()
