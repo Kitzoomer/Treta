@@ -39,6 +39,7 @@ from ui_theme import (
 # ===========================
 BASE_DIR = os.path.dirname(__file__)
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+APP_BUILD = "wakeword-fix-1"
 
 
 def load_config() -> dict:
@@ -256,6 +257,7 @@ class TretaApp(ctk.CTk):
 
         # Logs iniciales
         self._log("Treta Panel listo.\n")
+        self._log(f"Build: {APP_BUILD}\n")
         if not api_key:
             self._log("⚠ Falta OPENAI_API_KEY. (Sin esto no hay voz/IA)\n")
         else:
@@ -677,6 +679,14 @@ class TretaApp(ctk.CTk):
 
                     partial_norm = normalize_text(partial)
                     final_norm = normalize_text(final)
+                    matched = wake_word_matches(
+                        partial_norm, wake_candidates, self.wake_word_threshold
+                    )
+                    if not matched and final_norm:
+                        matched = wake_word_matches(
+                            final_norm, wake_candidates, self.wake_word_threshold
+                        )
+                    if matched:
                     partial_hit = wake_word_matches(
                         partial_norm, wake_candidates, self.wake_word_threshold
                     )
