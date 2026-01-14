@@ -703,12 +703,12 @@ class TretaPanel(tk.Tk):
         t_norm = normalize_text(t)
 
         if self._handle_local_intent(t_norm):
-actriz         if is_time_request(t_norm):
-            now = datetime.now().strftime("%H:%M")
-            answer = f"Son las {now}."
-            self._log(f"🕒 Hora local: {now}\n")
-            self.speak(answer)
-            return True
+            if is_time_request(t_norm):
+                now = datetime.now().strftime("%H:%M")
+                answer = f"Son las {now}."
+                self._log(f"🕒 Hora local: {now}\n")
+                self.speak(answer)
+                return True
 
         for rule in self.cfg.get("voice_commands", []):
             m = (rule.get("match") or "").lower()
