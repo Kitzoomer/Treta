@@ -679,15 +679,14 @@ class TretaApp(ctk.CTk):
 
                     partial_norm = normalize_text(partial)
                     final_norm = normalize_text(final)
-                    partial_hit = wake_word_matches(
+                    matched = wake_word_matches(
                         partial_norm, wake_candidates, self.wake_word_threshold
                     )
-                    final_hit = False
-                    if final_norm:
-                        final_hit = wake_word_matches(
+                    if not matched and final_norm:
+                        matched = wake_word_matches(
                             final_norm, wake_candidates, self.wake_word_threshold
                         )
-                    if partial_hit or final_hit:
+                    if matched:
                         now = time.time()
                         if now - last_trigger < self.wake_cooldown_sec:
                             continue
