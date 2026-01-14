@@ -6,6 +6,7 @@ import queue
 import threading
 import tempfile
 import unicodedata
+import difflib
 
 import numpy as np
 import sounddevice as sd
@@ -90,6 +91,22 @@ def normalize_text(text: str) -> str:
     return "".join(
         c for c in unicodedata.normalize("NFD", lowered) if unicodedata.category(c) != "Mn"
     )
+
+
+def wake_word_matches(text: str, candidates: list[str], threshold: float) -> bool:
+    if not text or not candidates:
+        return False
+    words = text.split()
+    for candidate in candidates:
+        if candidate in words:
+            return True
+    for candidate in candidates:
+        if not words:
+            break
+        for word in words:
+            if difflib.SequenceMatcher(None, word, candidate).ratio() >= threshold:
+                return True
+    return False
 
 
 def pick_input_device(cfg: dict) -> int | None:
@@ -199,6 +216,16 @@ class TretaApp(ctk.CTk):
         self.hotword_stop = threading.Event()
         self.hotword_busy = threading.Event()
         self.wake_word = (self.cfg.get("wake_word", "treta") or "treta").strip().lower()
+        self.wake_word_variants = self.cfg.get("wake_word_variants", [])
+        self.wake_word_threshold = float(self.cfg.get("wake_word_fuzzy_threshold", 0.86))
+        if not isinstance(self.wake_word_variants, list):
+            self.wake_word_variants = []
+        self.wake_word_variants = [
+            normalize_text(str(item)).strip()
+            for item in self.wake_word_variants
+            if str(item).strip()
+        ]
+        self.wake_word_variants = [w for w in self.wake_word_variants if w and w != self.wake_word]
 
         # ✅ FIX CRÍTICO: ruta robusta del modelo Vosk
         cfg_path = self.cfg.get("vosk_model_path", os.path.join("models", "vosk-es"))
@@ -234,7 +261,8 @@ class TretaApp(ctk.CTk):
         else:
             self._log("✅ OPENAI_API_KEY detectada.\n")
         self._log(f"🎤 Mic: {self.mic_index if self.mic_index is not None else 'default del sistema'}\n")
-        self._log(f"🟠 Wake-word: '{self.wake_word.upper()}' (always-on)\n")
+        wake_words = ", ".join([self.wake_word.upper(), *[w.upper() for w in self.wake_word_variants]])
+        self._log(f"🟠 Wake-word: '{wake_words}' (always-on)\n")
         self._log(f"🟠 Vosk model path: {self.vosk_model_path}\n\n")
         self._log("🧠 Sistema Treta operativo.\n")
         self._log("▶ Ejecutado: presence_start\n")
@@ -559,8 +587,11 @@ class TretaApp(ctk.CTk):
         wake_sr = int(self.wake_sample_rate)
         wake_ch = 1
         wake_word_norm = normalize_text(self.wake_word)
+        wake_candidates = [wake_word_norm, *self.wake_word_variants]
 
-        grammar = json.dumps([self.wake_word, "[unk]"])
+        grammar_words = [self.wake_word, *self.wake_word_variants]
+        grammar_words = [w for w in grammar_words if w]
+        grammar = json.dumps([*grammar_words, "[unk]"])
         rec = KaldiRecognizer(model, wake_sr, grammar)
         try:
             rec.SetWords(False)
@@ -646,6 +677,8 @@ class TretaApp(ctk.CTk):
 
                     partial_norm = normalize_text(partial)
                     final_norm = normalize_text(final)
+                    if wake_word_matches(partial_norm, wake_candidates, self.wake_word_threshold) or (
+                        final_norm and wake_word_matches(final_norm, wake_candidates, self.wake_word_threshold)
                     if wake_word_norm and (
                         wake_word_norm in partial_norm.split() or wake_word_norm in final_norm.split()
                     ):

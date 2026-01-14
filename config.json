@@ -12,6 +12,12 @@
     "thresh_mult":  2.6,
     "system_prompt":  "Eres Treta la Torreta: tecnica, clara, curiosa y creativa. Responde en espaÃƒÆ’Ã‚Â±ol, directo y ÃƒÆ’Ã‚Âºtil.",
     "wake_word":  "treta",
+    "wake_word_variants":  [
+                               "treda",
+                               "tretae",
+                               "tretas"
+                           ],
+    "wake_word_fuzzy_threshold":  0.82,
     "stt_initial_prompt":  "Treta,",
     "min_input_rms":  0.004,
     "max_input_rms":  0.35,
