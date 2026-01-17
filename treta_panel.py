@@ -1,4 +1,5 @@
 import os, json, time, threading, queue, subprocess
+import sys
 import argparse
 import difflib
 import re
@@ -383,6 +384,7 @@ class TretaPanel(tk.Tk):
         self.whisper = None
         self._whisper_error = None
         self._whisper_loaded = False
+        self._whisper_disabled = sys.version_info < (3, 10)
         # Whisper local
         self.whisper, self._whisper_error = load_whisper_model(self.cfg)
         if WhisperModel:
@@ -764,6 +766,12 @@ class TretaPanel(tk.Tk):
         if self._whisper_loaded:
             return
         self._whisper_loaded = True
+        if self._whisper_disabled:
+            self._log(
+                f"⚠ Python {sys.version.split()[0]} detectado. "
+                "El STT local requiere Python 3.10+.\n"
+            )
+            return
         self.whisper, self._whisper_error = load_whisper_model(self.cfg)
         if self.whisper is None:
             detail = f" Detalle: {self._whisper_error}" if self._whisper_error else ""
