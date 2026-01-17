@@ -22,6 +22,9 @@
     "stt_initial_prompt":  "Treta,",
     "min_input_rms":  0.004,
     "max_input_rms":  0.35,
+    "discreet_mode":  false,
+    "history_keep_days":  90,
+    "history_max_entries":  10000,
     "time_zone":  "local",
     "fuzzy_match_threshold":  0.84,
     "local_intents":  [
