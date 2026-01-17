@@ -1,4 +1,5 @@
 import os, json, time, threading, queue, subprocess
+import sys
 import argparse
 import difflib
 import re
@@ -12,8 +13,12 @@ import numpy as np
 import sounddevice as sd
 import pyttsx3
 
-from openai import OpenAI
-from faster_whisper import WhisperModel
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
+WhisperModel = None
 
 from ui_theme import (
     MECH_BG,
@@ -44,6 +49,9 @@ STATE_PATH = os.path.join(DATA_DIR, "state.json")
 IDEAS_PATH = os.path.join(DATA_DIR, "ideas.jsonl")
 DIARY_PATH = os.path.join(DATA_DIR, "diary.jsonl")
 INTENTS_PATH = os.path.join(DATA_DIR, "intents.jsonl")
+HISTORY_PATH = os.path.join(DATA_DIR, "history.jsonl")
+
+CONFIRM_TIMEOUT_SEC = 5
 
 DEFAULT_PANEL_BUTTONS_LEFT = [
     {"label": "Modo Trabajo", "action": "mode_work"},
@@ -278,6 +286,18 @@ def pick_input_device(cfg: dict) -> int | None:
     return None
 
 
+def load_whisper_model(cfg: dict) -> tuple[object | None, str | None]:
+    try:
+        from faster_whisper import WhisperModel as LocalWhisperModel
+    except Exception as exc:
+        return None, str(exc)
+    try:
+        model = LocalWhisperModel(cfg.get("model", "small"), device="cpu", compute_type="int8")
+    except Exception as exc:
+        return None, str(exc)
+    return model, None
+
+
 class TretaPanel(tk.Tk):
     def __init__(self, debug: bool = False):
         super().__init__()
@@ -286,6 +306,11 @@ class TretaPanel(tk.Tk):
         self.cfg = load_config()
         self.debug = debug
         self._last_vad_seconds: float | None = None
+        self.locale = (self.cfg.get("language") or "es").strip().lower()
+        self.history_path = HISTORY_PATH
+        self.history_keep_days = int(self.cfg.get("history_keep_days", 90))
+        self.history_max_entries = int(self.cfg.get("history_max_entries", 10000))
+        self._history_write_count = 0
 
         self.title("TRETA — Panel de Control")
         self.geometry("1100x650")
@@ -345,10 +370,16 @@ class TretaPanel(tk.Tk):
 
         # IA (OpenAI)
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        self.client = OpenAI(api_key=api_key) if api_key else None
+        if OpenAI and api_key:
+            self.client = OpenAI(api_key=api_key)
+        else:
+            self.client = None
 
-        # Whisper local
-        self.whisper = WhisperModel(self.cfg.get("model", "small"), device="cpu", compute_type="int8")
+        # Whisper local (lazy init)
+        self.whisper = None
+        self._whisper_error = None
+        self._whisper_loaded = False
+        self._whisper_disabled = sys.version_info < (3, 10)
 
         # Estado vivo
         self.state = read_json(STATE_PATH, {
@@ -383,6 +414,50 @@ class TretaPanel(tk.Tk):
         self.after(8000, self._alive_tick)
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    # ---------- Copy ----------
+    def _copy(self, key: str, **kwargs) -> str:
+        copy = {
+            "confirm_prompt": {
+                "es": "¿Confirmas la acción? Sí/No.",
+                "en": "Confirm the action? Yes/No.",
+            },
+            "confirm_yes": {
+                "es": "Hecho.",
+                "en": "Done.",
+            },
+            "confirm_no": {
+                "es": "Cancelado. Sin cambios.",
+                "en": "Canceled. No changes made.",
+            },
+            "confirm_timeout": {
+                "es": "Sin respuesta. Cancelado por seguridad.",
+                "en": "No response. Canceled for safety.",
+            },
+            "confirm_followup": {
+                "es": "Necesito un Sí o No.",
+                "en": "Please answer Yes or No.",
+            },
+            "mode_not_found": {
+                "es": "Error técnico: modo no encontrado. Prueba: {suggestions}.",
+                "en": "Technical error: mode not found. Try: {suggestions}.",
+            },
+            "mode_activated": {
+                "es": "Modo {mode} activado.",
+                "en": "Mode {mode} activated.",
+            },
+            "stt_failed": {
+                "es": "No he entendido eso. Inténtalo de nuevo.",
+                "en": "I didn't catch that. Please try again.",
+            },
+            "insult_boundary": {
+                "es": "No te ayudo si insultas. Reformúlalo.",
+                "en": "I can't help if you insult me. Please rephrase.",
+            },
+        }
+        lang = "en" if self.locale.startswith("en") else "es"
+        template = copy.get(key, {}).get(lang, "")
+        return template.format(**kwargs).strip()
 
     # ---------- UI ----------
     def _build_ui(self):
@@ -469,7 +544,10 @@ class TretaPanel(tk.Tk):
 
         self._log("Treta Panel listo.\n")
         if not self.client:
-            self._log("⚠ Falta OPENAI_API_KEY (solo afecta a respuestas IA). La voz y acciones pueden funcionar igual.\n")
+            if OpenAI is None:
+                self._log("⚠ Falta dependencia OpenAI. La voz y acciones pueden funcionar igual.\n")
+            else:
+                self._log("⚠ Falta OPENAI_API_KEY (solo afecta a respuestas IA). La voz y acciones pueden funcionar igual.\n")
         mic_desc = "default del sistema"
         if self.mic_index is not None:
             mic_desc = str(self.mic_index)
@@ -564,6 +642,74 @@ class TretaPanel(tk.Tk):
         except Exception as e:
             self._log(f"⚠ No pude guardar debug_last.wav: {e}\n")
 
+    # ---------- History ----------
+    def _append_history(self, event: dict) -> None:
+        append_jsonl(self.history_path, event)
+        self._history_write_count += 1
+        if self._history_write_count % 50 == 0:
+            self._prune_history()
+
+    def _prune_history(self) -> None:
+        if not os.path.exists(self.history_path):
+            return
+        cutoff = datetime.now() - timedelta(days=self.history_keep_days)
+        kept: list[dict] = []
+        try:
+            with open(self.history_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    ts = obj.get("ts")
+                    if ts:
+                        try:
+                            if datetime.fromisoformat(ts) < cutoff:
+                                continue
+                        except Exception:
+                            pass
+                    kept.append(obj)
+        except Exception:
+            return
+        if len(kept) > self.history_max_entries:
+            kept = kept[-self.history_max_entries :]
+        tmp = self.history_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            for obj in kept:
+                f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        os.replace(tmp, self.history_path)
+
+    def _log_turn_history(
+        self,
+        user_text: str,
+        assistant_text: str,
+        latencies: dict,
+        error_code: str | None = None,
+    ) -> None:
+        event = {
+            "ts": now_iso(),
+            "event": "turn",
+            "mode": self.state.get("mode", "normal"),
+            "user_text": user_text,
+            "assistant_text": assistant_text,
+            "latency_ms": latencies,
+            "error_code": error_code,
+        }
+        self._append_history(event)
+
+    def _log_event(self, event: str, payload: dict) -> None:
+        self._append_history(
+            {
+                "ts": now_iso(),
+                "event": event,
+                "mode": self.state.get("mode", "normal"),
+                **payload,
+            }
+        )
+
     # ---------- TTS ----------
     def _tts_worker(self):
         engine = pyttsx3.init(driverName="sapi5")
@@ -588,10 +734,33 @@ class TretaPanel(tk.Tk):
     def speak(self, text: str):
         if not text:
             return
+        if self._discreet_mode():
+            return
         s = text.strip()
         while s:
             self.tts_q.put(s[:260])
             s = s[260:]
+
+    def _discreet_mode(self) -> bool:
+        return bool(self.cfg.get("discreet_mode", False))
+
+    def _ensure_whisper(self) -> None:
+        if self._whisper_loaded:
+            return
+        self._whisper_loaded = True
+        if self._whisper_disabled:
+            self._log(
+                f"⚠ Python {sys.version.split()[0]} detectado. "
+                "El STT local requiere Python 3.10+.\n"
+            )
+            return
+        self.whisper, self._whisper_error = load_whisper_model(self.cfg)
+        if self.whisper is None:
+            detail = f" Detalle: {self._whisper_error}" if self._whisper_error else ""
+            self._log(
+                "⚠ Falta dependencia de STT local (faster-whisper/pyav). El STT local no está disponible."
+                f"{detail}\n"
+            )
 
     # ---------- Estado vivo ----------
     def _save_state(self):
@@ -605,7 +774,7 @@ class TretaPanel(tk.Tk):
     def _presence_startup(self):
         self._log("🟦 Sistema Treta operativo.\n")
         self._diary("presence", "startup")
-        self._run_action_id("presence_start", allow_confirm=False)
+        self._run_action_id("presence_start", allow_confirm=False, source="system")
 
     def _alive_tick(self):
         try:
@@ -656,12 +825,15 @@ class TretaPanel(tk.Tk):
             return
 
         if needs_confirm:
-            self._request_confirm(action_id, f"¿Confirmas ejecutar: {action_id}?")
+            self._request_confirm(action_id, self._copy("confirm_prompt"))
             return
 
-        self._run_action_id(action_id, allow_confirm=False)
+        self._run_action_id(action_id, allow_confirm=False, source="ui")
 
-    def _run_action_id(self, action_id: str, allow_confirm: bool = True):
+    def _mode_label_from_action(self, action_id: str) -> str:
+        return action_id.replace("mode_", "").replace("_", " ").strip()
+
+    def _run_action_id(self, action_id: str, allow_confirm: bool = True, source: str = "ui"):
         actions = self.cfg.get("actions", {})
         spec = actions.get(action_id)
         if not spec:
@@ -693,15 +865,43 @@ class TretaPanel(tk.Tk):
             self._log(f"▶ Ejecutado: {action_id}\n")
         except Exception as e:
             self._log(f"❌ Error ejecutando {action_id}: {e}\n")
+            return
+
+        if action_id.startswith("mode_"):
+            mode_name = self._mode_label_from_action(action_id)
+            self.state["mode"] = mode_name
+            self._save_state()
+            self._log_event(
+                "mode_activated",
+                {"mode_name": mode_name, "source": source},
+            )
 
     # ---------- Confirmaciones ----------
-    def _request_confirm(self, action_id: str, text: str):
-        write_json(PENDING_CONFIRM_PATH, {"ts": now_iso(), "action": action_id, "text": text})
-        self._show_confirm(text)
-        self._log(f"⚠ Confirmación requerida: {text}\n")
-        self.speak(text)
+    def _request_confirm(self, action_id: str, text: str | None):
+        prompt = text or self._copy("confirm_prompt")
+        expires_at = (datetime.now() + timedelta(seconds=CONFIRM_TIMEOUT_SEC)).isoformat(timespec="seconds")
+        write_json(
+            PENDING_CONFIRM_PATH,
+            {
+                "ts": now_iso(),
+                "action": action_id,
+                "text": prompt,
+                "expires_at": expires_at,
+                "attempts": 0,
+            },
+        )
+        self._show_confirm(prompt)
+        self._log(f"⚠ Confirmación requerida: {prompt}\n")
+        self.speak(prompt)
+        self._log_event(
+            "confirmation_prompted",
+            {"action": action_id, "text": prompt},
+        )
 
     def _poll_pending_confirm(self):
+        if self._check_confirm_timeout():
+            self.after(700, self._poll_pending_confirm)
+            return
         if os.path.exists(PENDING_CONFIRM_PATH):
             obj = read_json(PENDING_CONFIRM_PATH, None)
             if obj and obj.get("text"):
@@ -709,6 +909,106 @@ class TretaPanel(tk.Tk):
         else:
             self._hide_confirm()
         self.after(700, self._poll_pending_confirm)
+
+    def _check_confirm_timeout(self) -> bool:
+        if not os.path.exists(PENDING_CONFIRM_PATH):
+            return False
+        obj = read_json(PENDING_CONFIRM_PATH, None)
+        if not obj:
+            return False
+        expires_at = obj.get("expires_at")
+        if not expires_at:
+            return False
+        try:
+            expired = datetime.now() > datetime.fromisoformat(expires_at)
+        except Exception:
+            expired = False
+        if not expired:
+            return False
+        try:
+            os.remove(PENDING_CONFIRM_PATH)
+        except Exception:
+            pass
+        self._hide_confirm()
+        msg = self._copy("confirm_timeout")
+        self._log(f"⏱️ Confirmación expirada. {msg}\n")
+        self.speak(msg)
+        self._log_event(
+            "confirmation_resolved",
+            {"action": obj.get("action"), "result": "timeout"},
+        )
+        return True
+
+    def _parse_confirmation_response(self, text: str) -> str | None:
+        t = normalize_text(text)
+        yes_terms = {"si", "sí", "vale", "ok", "okay", "yes"}
+        no_terms = {"no", "cancelar", "cancela", "cancelado", "never mind", "stop"}
+        if any(term in t.split() or term in t for term in yes_terms):
+            return "yes"
+        if any(term in t.split() or term in t for term in no_terms):
+            return "no"
+        return None
+
+    def _handle_confirmation_response(self, text: str) -> tuple[bool, str, str | None]:
+        if not os.path.exists(PENDING_CONFIRM_PATH):
+            return False, "", None
+        obj = read_json(PENDING_CONFIRM_PATH, None)
+        if not obj:
+            return False, "", None
+        action_id = obj.get("action")
+        response = self._parse_confirmation_response(text)
+        if response == "yes":
+            try:
+                os.remove(PENDING_CONFIRM_PATH)
+            except Exception:
+                pass
+            self._hide_confirm()
+            msg = self._copy("confirm_yes")
+            self._log(f"✅ Confirmado.\n")
+            self.speak(msg)
+            if action_id:
+                self._run_action_id(action_id, allow_confirm=False, source="voice")
+            self._log_event(
+                "confirmation_resolved",
+                {"action": action_id, "result": "yes"},
+            )
+            return True, msg, None
+        if response == "no":
+            try:
+                os.remove(PENDING_CONFIRM_PATH)
+            except Exception:
+                pass
+            self._hide_confirm()
+            msg = self._copy("confirm_no")
+            self._log("❌ Cancelado.\n")
+            self.speak(msg)
+            self._diary("confirm", "cancel")
+            self._log_event(
+                "confirmation_resolved",
+                {"action": action_id, "result": "no"},
+            )
+            return True, msg, None
+        attempts = int(obj.get("attempts", 0))
+        if attempts < 1:
+            obj["attempts"] = attempts + 1
+            write_json(PENDING_CONFIRM_PATH, obj)
+            msg = self._copy("confirm_followup")
+            self._log(f"⚠ Confirmación: {msg}\n")
+            self.speak(msg)
+            return True, msg, None
+        try:
+            os.remove(PENDING_CONFIRM_PATH)
+        except Exception:
+            pass
+        self._hide_confirm()
+        msg = self._copy("confirm_timeout")
+        self._log("❌ Cancelado por seguridad.\n")
+        self.speak(msg)
+        self._log_event(
+            "confirmation_resolved",
+            {"action": action_id, "result": "cancel"},
+        )
+        return True, msg, "CONFIRM_TIMEOUT"
 
     def _show_confirm(self, text: str):
         self.confirm_label.config(text=text)
@@ -731,10 +1031,15 @@ class TretaPanel(tk.Tk):
         except Exception:
             pass
         self._hide_confirm()
+        msg = self._copy("confirm_yes")
         self._log("✅ Confirmado.\n")
-        self.speak("Confirmado.")
+        self.speak(msg)
         if action_id:
-            self._run_action_id(action_id, allow_confirm=False)
+            self._run_action_id(action_id, allow_confirm=False, source="ui")
+        self._log_event(
+            "confirmation_resolved",
+            {"action": action_id, "result": "yes"},
+        )
 
     def _confirm_no(self):
         try:
@@ -742,9 +1047,14 @@ class TretaPanel(tk.Tk):
         except Exception:
             pass
         self._hide_confirm()
+        msg = self._copy("confirm_no")
         self._log("❌ Cancelado.\n")
-        self.speak("Cancelado.")
+        self.speak(msg)
         self._diary("confirm", "cancel")
+        self._log_event(
+            "confirmation_resolved",
+            {"action": None, "result": "no"},
+        )
 
     # ---------- Voz ----------
     def toggle_listen(self):
@@ -766,9 +1076,11 @@ class TretaPanel(tk.Tk):
 
     def _listen_flow(self):
         try:
+            total_t0 = time.perf_counter()
             capture_t0 = time.perf_counter()
             audio = self._record_until_silence()
-            self._log_timing("capture", time.perf_counter() - capture_t0)
+            capture_sec = time.perf_counter() - capture_t0
+            self._log_timing("capture", capture_sec)
             if self._last_vad_seconds is not None:
                 self._log_timing("VAD", self._last_vad_seconds)
             self.after(0, lambda: self.meter.configure(value=0))
@@ -792,9 +1104,22 @@ class TretaPanel(tk.Tk):
             self._set_status("transcribiendo…")
             stt_t0 = time.perf_counter()
             text = self._transcribe(audio)
-            self._log_timing("STT", time.perf_counter() - stt_t0)
+            stt_sec = time.perf_counter() - stt_t0
+            self._log_timing("STT", stt_sec)
             if not text:
+                msg = self._copy("stt_failed")
                 self._log("📝 Oído: (nada claro)\n\n")
+                self.speak(msg)
+                self._log_turn_history(
+                    "",
+                    msg,
+                    {
+                        "capture_ms": int(capture_sec * 1000),
+                        "stt_ms": int(stt_sec * 1000),
+                        "total_ms": int((time.perf_counter() - total_t0) * 1000),
+                    },
+                    error_code="STT_FAILED",
+                )
                 self._finish_listen()
                 return
 
@@ -805,24 +1130,67 @@ class TretaPanel(tk.Tk):
                 self._idea_capture_next = False
                 self._add_idea(text)
                 self._log("📌 Idea guardada.\n\n")
-                self.speak("Idea guardada.")
+                msg = "Idea guardada."
+                self.speak(msg)
+                self._log_turn_history(
+                    text,
+                    msg,
+                    {
+                        "capture_ms": int(capture_sec * 1000),
+                        "stt_ms": int(stt_sec * 1000),
+                        "total_ms": int((time.perf_counter() - total_t0) * 1000),
+                    },
+                )
                 self._finish_listen()
                 return
 
-            if self._maybe_handle_intent(text):
+            handled, response_text, error_code = self._maybe_handle_intent(text)
+            if handled:
                 self._log("\n")
+                self._log_turn_history(
+                    text,
+                    response_text,
+                    {
+                        "capture_ms": int(capture_sec * 1000),
+                        "stt_ms": int(stt_sec * 1000),
+                        "total_ms": int((time.perf_counter() - total_t0) * 1000),
+                    },
+                    error_code=error_code,
+                )
                 self._finish_listen()
                 return
 
             # Respuesta IA (si hay API key)
             if self.client:
                 self._set_status("pensando…")
+                think_t0 = time.perf_counter()
                 answer = self._ask_chatgpt(text)
+                think_sec = time.perf_counter() - think_t0
                 self._log(f"🤖 Treta: {answer}\n\n")
                 self._set_status("hablando…")
                 self.speak(answer)
+                self._log_turn_history(
+                    text,
+                    answer,
+                    {
+                        "capture_ms": int(capture_sec * 1000),
+                        "stt_ms": int(stt_sec * 1000),
+                        "think_ms": int(think_sec * 1000),
+                        "total_ms": int((time.perf_counter() - total_t0) * 1000),
+                    },
+                )
             else:
-                self._log("🤖 Treta: (sin API Key) Comando registrado. Puedo ejecutar acciones y guardar ideas.\n\n")
+                msg = "Comando registrado. Puedo ejecutar acciones y guardar ideas."
+                self._log(f"🤖 Treta: (sin API Key) {msg}\n\n")
+                self._log_turn_history(
+                    text,
+                    msg,
+                    {
+                        "capture_ms": int(capture_sec * 1000),
+                        "stt_ms": int(stt_sec * 1000),
+                        "total_ms": int((time.perf_counter() - total_t0) * 1000),
+                    },
+                )
 
         except Exception as e:
             self._log(f"❌ Error: {e}\n\n")
@@ -835,20 +1203,103 @@ class TretaPanel(tk.Tk):
         self.btn_listen.config(text="🎙️ Escuchar")
         self._set_status("en espera")
 
-    def _maybe_handle_intent(self, text: str) -> bool:
-        t = text.lower().strip()
+    def _available_modes(self) -> dict[str, dict]:
+        actions = {**DEFAULT_ACTIONS, **self.cfg.get("actions", {})}
+        modes: dict[str, dict] = {}
+        for action_id in actions.keys():
+            if not action_id.startswith("mode_"):
+                continue
+            label = self._mode_label_from_action(action_id)
+            modes[normalize_text(label)] = {"action_id": action_id, "label": label}
+        return modes
+
+    def _handle_mode_command(self, raw_text: str) -> tuple[bool, str, str | None]:
+        raw_norm = normalize_text(raw_text).strip()
+        match = re.match(r"^treta[, ]+ejecuta modo\s+(.+)$", raw_norm)
+        if not match:
+            return False, "", None
+        requested = match.group(1).strip(" .,!¡¿?")
+        requested_norm = normalize_text(requested)
+        modes = self._available_modes()
+        if requested_norm in modes:
+            action_id = modes[requested_norm]["action_id"]
+            label = modes[requested_norm]["label"]
+            response = self._copy("mode_activated", mode=label)
+            self._log(f"🎛️ Modo solicitado: {label}\n")
+            self.speak(response)
+            self._run_action_id(action_id, allow_confirm=False, source="voice")
+            return True, response, None
+        suggestions = difflib.get_close_matches(requested_norm, list(modes.keys()), n=3, cutoff=0.5)
+        suggestion_labels = [modes[key]["label"] for key in suggestions]
+        if suggestion_labels:
+            response = self._copy("mode_not_found", suggestions=", ".join(suggestion_labels))
+        else:
+            response = self._copy("mode_not_found", suggestions="—")
+        self._log(f"⚠ Modo no encontrado: {requested}\n")
+        self.speak(response)
+        self._log_event(
+            "mode_not_found",
+            {"requested_name": requested, "suggestions": suggestion_labels},
+        )
+        return True, response, "MODE_NOT_FOUND"
+
+    def _is_direct_insult(self, text: str) -> bool:
+        t = normalize_text(text)
+        insults = {
+            "idiota",
+            "imbecil",
+            "estupido",
+            "estupida",
+            "tonto",
+            "tonta",
+            "gilipollas",
+            "mierda",
+            "puta",
+            "puto",
+            "fuck",
+            "shit",
+            "asshole",
+        }
+        if not any(word in t for word in insults):
+            return False
+        return "treta" in t or "eres" in t or "tu" in t
+
+    def _maybe_handle_intent(self, text: str) -> tuple[bool, str, str | None]:
+        raw = text.strip()
+        raw_norm = normalize_text(raw)
+
+        self._check_confirm_timeout()
+
+        handled_confirm, confirm_msg, confirm_error = self._handle_confirmation_response(raw_norm)
+        if handled_confirm:
+            return True, confirm_msg, confirm_error
+
+        if self._is_direct_insult(raw_norm):
+            msg = self._copy("insult_boundary")
+            self._log(f"🚫 {msg}\n")
+            self.speak(msg)
+            return True, msg, "INSULT_BLOCK"
+
+        handled_mode, mode_msg, mode_error = self._handle_mode_command(raw)
+        if handled_mode:
+            return True, mode_msg, mode_error
+
+        t = raw.lower().strip()
         wake = (self.cfg.get("wake_word") or "").lower().strip()
         if wake and wake in t:
             t = t.replace(wake, "").strip(" ,.:;!?¡¿")
         t_norm = normalize_text(t)
 
-        if self._handle_local_intent(t_norm):
-            if is_time_request(t_norm):
-                now = datetime.now().strftime("%H:%M")
-                answer = f"Son las {now}."
-                self._log(f"🕒 Hora local: {now}\n")
-                self.speak(answer)
-                return True
+        matched, response = self._handle_local_intent(t_norm)
+        if matched:
+            return True, response, None
+
+        if is_time_request(t_norm):
+            now = datetime.now().strftime("%H:%M")
+            answer = f"Son las {now}."
+            self._log(f"🕒 Hora local: {now}\n")
+            self.speak(answer)
+            return True, answer, None
 
         for rule in self.cfg.get("voice_commands", []):
             m = (rule.get("match") or "").lower()
@@ -860,26 +1311,28 @@ class TretaPanel(tk.Tk):
                 self._diary("voice_command", action or m)
 
                 if action == "idea_prompt":
+                    msg = "Dime la idea y la guardo."
                     self._log("🧠 Dime la idea (la guardo).\n")
-                    self.speak("Dime la idea y la guardo.")
+                    self.speak(msg)
                     self._idea_capture_next = True
-                    return True
+                    return True, msg, None
 
                 if needs_confirm:
-                    self._request_confirm(action, f"¿Confirmas ejecutar {action}?")
-                    return True
+                    prompt = self._copy("confirm_prompt")
+                    self._request_confirm(action, prompt)
+                    return True, prompt, None
 
                 if action:
-                    self._run_action_id(action, allow_confirm=False)
-                    return True
+                    self._run_action_id(action, allow_confirm=False, source="voice")
+                    return True, "", None
 
-        return False
+        return False, "", None
 
     def _log_intent(self, payload: dict):
         payload = {"ts": now_iso(), **payload}
         append_jsonl(INTENTS_PATH, payload)
 
-    def _handle_local_intent(self, text: str) -> bool:
+    def _handle_local_intent(self, text: str) -> tuple[bool, str]:
         intents = load_local_intents(self.cfg)
         threshold = float(self.cfg.get("fuzzy_match_threshold", 0.84))
         for intent in intents:
@@ -914,8 +1367,8 @@ class TretaPanel(tk.Tk):
                         }
                     )
                     self.speak(answer)
-                    return True
-        return False
+                    return True, answer
+        return False, ""
 
     # ---------- Audio capture ----------
     def _record_until_silence(self):
@@ -1005,6 +1458,9 @@ class TretaPanel(tk.Tk):
             return None
 
     def _transcribe(self, audio: np.ndarray) -> str:
+        self._ensure_whisper()
+        if self.whisper is None:
+            return ""
         sr_in = int(self._last_audio_sr or self._resolved_sr or 48000)
         audio_16k = resample_linear(audio, sr_in, 16000)
         prompt = (self.cfg.get("stt_initial_prompt") or "").strip()
