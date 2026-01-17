@@ -18,6 +18,11 @@ except Exception:
     OpenAI = None
 
 WhisperModel = None
+try:
+    from faster_whisper import WhisperModel
+except Exception:
+    WhisperModel = None
+from faster_whisper import WhisperModel
 
 from ui_theme import (
     MECH_BG,
@@ -378,6 +383,12 @@ class TretaPanel(tk.Tk):
         self.whisper = None
         self._whisper_error = None
         self._whisper_loaded = False
+        # Whisper local
+        self.whisper, self._whisper_error = load_whisper_model(self.cfg)
+        if WhisperModel:
+            self.whisper = WhisperModel(self.cfg.get("model", "small"), device="cpu", compute_type="int8")
+        else:
+            self.whisper = None
 
         # Estado vivo
         self.state = read_json(STATE_PATH, {
@@ -541,6 +552,13 @@ class TretaPanel(tk.Tk):
         self._build_side_buttons()
 
         self._log("Treta Panel listo.\n")
+        if self.whisper is None:
+            detail = f" Detalle: {self._whisper_error}" if getattr(self, "_whisper_error", None) else ""
+            self._log(
+                "⚠ Falta dependencia de STT local (faster-whisper/pyav). El STT local no está disponible."
+                f"{detail}\n"
+            )
+            self._log("⚠ Falta dependencia faster-whisper/pyav. El STT local no está disponible.\n")
         if not self.client:
             if OpenAI is None:
                 self._log("⚠ Falta dependencia OpenAI. La voz y acciones pueden funcionar igual.\n")
@@ -821,6 +839,14 @@ class TretaPanel(tk.Tk):
             return
 
         self._run_action_id(action_id, allow_confirm=False, source="ui")
+
+    def _mode_label_from_action(self, action_id: str) -> str:
+        return action_id.replace("mode_", "").replace("_", " ").strip()
+
+
+    def _mode_label_from_action(self, action_id: str) -> str:
+        return action_id.replace("mode_", "").replace("_", " ").strip()
+
 
     def _mode_label_from_action(self, action_id: str) -> str:
         return action_id.replace("mode_", "").replace("_", " ").strip()
