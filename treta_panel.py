@@ -12,7 +12,11 @@ import numpy as np
 import sounddevice as sd
 import pyttsx3
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
 from faster_whisper import WhisperModel
 
 from ui_theme import (
@@ -353,7 +357,10 @@ class TretaPanel(tk.Tk):
 
         # IA (OpenAI)
         api_key = os.environ.get("OPENAI_API_KEY", "").strip()
-        self.client = OpenAI(api_key=api_key) if api_key else None
+        if OpenAI and api_key:
+            self.client = OpenAI(api_key=api_key)
+        else:
+            self.client = None
 
         # Whisper local
         self.whisper = WhisperModel(self.cfg.get("model", "small"), device="cpu", compute_type="int8")
@@ -521,7 +528,10 @@ class TretaPanel(tk.Tk):
 
         self._log("Treta Panel listo.\n")
         if not self.client:
-            self._log("⚠ Falta OPENAI_API_KEY (solo afecta a respuestas IA). La voz y acciones pueden funcionar igual.\n")
+            if OpenAI is None:
+                self._log("⚠ Falta dependencia OpenAI. La voz y acciones pueden funcionar igual.\n")
+            else:
+                self._log("⚠ Falta OPENAI_API_KEY (solo afecta a respuestas IA). La voz y acciones pueden funcionar igual.\n")
         mic_desc = "default del sistema"
         if self.mic_index is not None:
             mic_desc = str(self.mic_index)
