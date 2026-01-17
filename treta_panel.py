@@ -379,6 +379,10 @@ class TretaPanel(tk.Tk):
         else:
             self.client = None
 
+        # Whisper local (lazy init)
+        self.whisper = None
+        self._whisper_error = None
+        self._whisper_loaded = False
         # Whisper local
         self.whisper, self._whisper_error = load_whisper_model(self.cfg)
         if WhisperModel:
@@ -756,6 +760,18 @@ class TretaPanel(tk.Tk):
     def _discreet_mode(self) -> bool:
         return bool(self.cfg.get("discreet_mode", False))
 
+    def _ensure_whisper(self) -> None:
+        if self._whisper_loaded:
+            return
+        self._whisper_loaded = True
+        self.whisper, self._whisper_error = load_whisper_model(self.cfg)
+        if self.whisper is None:
+            detail = f" Detalle: {self._whisper_error}" if self._whisper_error else ""
+            self._log(
+                "⚠ Falta dependencia de STT local (faster-whisper/pyav). El STT local no está disponible."
+                f"{detail}\n"
+            )
+
     # ---------- Estado vivo ----------
     def _save_state(self):
         write_json(STATE_PATH, self.state)
@@ -823,6 +839,10 @@ class TretaPanel(tk.Tk):
             return
 
         self._run_action_id(action_id, allow_confirm=False, source="ui")
+
+    def _mode_label_from_action(self, action_id: str) -> str:
+        return action_id.replace("mode_", "").replace("_", " ").strip()
+
 
     def _mode_label_from_action(self, action_id: str) -> str:
         return action_id.replace("mode_", "").replace("_", " ").strip()
@@ -1456,6 +1476,7 @@ class TretaPanel(tk.Tk):
             return None
 
     def _transcribe(self, audio: np.ndarray) -> str:
+        self._ensure_whisper()
         if self.whisper is None:
             return ""
         sr_in = int(self._last_audio_sr or self._resolved_sr or 48000)
