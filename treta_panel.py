@@ -21,6 +21,7 @@ try:
     from faster_whisper import WhisperModel
 except Exception:
     WhisperModel = None
+from faster_whisper import WhisperModel
 
 from ui_theme import (
     MECH_BG,
