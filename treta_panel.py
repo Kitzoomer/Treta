@@ -17,6 +17,7 @@ try:
 except Exception:
     OpenAI = None
 
+WhisperModel = None
 try:
     from faster_whisper import WhisperModel
 except Exception:
@@ -289,6 +290,18 @@ def pick_input_device(cfg: dict) -> int | None:
     return None
 
 
+def load_whisper_model(cfg: dict) -> tuple[object | None, str | None]:
+    try:
+        from faster_whisper import WhisperModel as LocalWhisperModel
+    except Exception as exc:
+        return None, str(exc)
+    try:
+        model = LocalWhisperModel(cfg.get("model", "small"), device="cpu", compute_type="int8")
+    except Exception as exc:
+        return None, str(exc)
+    return model, None
+
+
 class TretaPanel(tk.Tk):
     def __init__(self, debug: bool = False):
         super().__init__()
@@ -367,6 +380,7 @@ class TretaPanel(tk.Tk):
             self.client = None
 
         # Whisper local
+        self.whisper, self._whisper_error = load_whisper_model(self.cfg)
         if WhisperModel:
             self.whisper = WhisperModel(self.cfg.get("model", "small"), device="cpu", compute_type="int8")
         else:
@@ -535,6 +549,11 @@ class TretaPanel(tk.Tk):
 
         self._log("Treta Panel listo.\n")
         if self.whisper is None:
+            detail = f" Detalle: {self._whisper_error}" if getattr(self, "_whisper_error", None) else ""
+            self._log(
+                "⚠ Falta dependencia de STT local (faster-whisper/pyav). El STT local no está disponible."
+                f"{detail}\n"
+            )
             self._log("⚠ Falta dependencia faster-whisper/pyav. El STT local no está disponible.\n")
         if not self.client:
             if OpenAI is None:
@@ -804,6 +823,10 @@ class TretaPanel(tk.Tk):
             return
 
         self._run_action_id(action_id, allow_confirm=False, source="ui")
+
+    def _mode_label_from_action(self, action_id: str) -> str:
+        return action_id.replace("mode_", "").replace("_", " ").strip()
+
 
     def _mode_label_from_action(self, action_id: str) -> str:
         return action_id.replace("mode_", "").replace("_", " ").strip()
