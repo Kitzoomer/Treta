@@ -17,6 +17,10 @@ try:
 except Exception:
     OpenAI = None
 
+try:
+    from faster_whisper import WhisperModel
+except Exception:
+    WhisperModel = None
 from faster_whisper import WhisperModel
 
 from ui_theme import (
@@ -363,7 +367,10 @@ class TretaPanel(tk.Tk):
             self.client = None
 
         # Whisper local
-        self.whisper = WhisperModel(self.cfg.get("model", "small"), device="cpu", compute_type="int8")
+        if WhisperModel:
+            self.whisper = WhisperModel(self.cfg.get("model", "small"), device="cpu", compute_type="int8")
+        else:
+            self.whisper = None
 
         # Estado vivo
         self.state = read_json(STATE_PATH, {
@@ -527,6 +534,8 @@ class TretaPanel(tk.Tk):
         self._build_side_buttons()
 
         self._log("Treta Panel listo.\n")
+        if self.whisper is None:
+            self._log("⚠ Falta dependencia faster-whisper/pyav. El STT local no está disponible.\n")
         if not self.client:
             if OpenAI is None:
                 self._log("⚠ Falta dependencia OpenAI. La voz y acciones pueden funcionar igual.\n")
@@ -1424,6 +1433,8 @@ class TretaPanel(tk.Tk):
             return None
 
     def _transcribe(self, audio: np.ndarray) -> str:
+        if self.whisper is None:
+            return ""
         sr_in = int(self._last_audio_sr or self._resolved_sr or 48000)
         audio_16k = resample_linear(audio, sr_in, 16000)
         prompt = (self.cfg.get("stt_initial_prompt") or "").strip()
